@@ -1,0 +1,4 @@
+confluent-kafka==2.3.0
+zstandard==0.22.0
+python-dotenv==1.0.1
+pytest==8.1.1
