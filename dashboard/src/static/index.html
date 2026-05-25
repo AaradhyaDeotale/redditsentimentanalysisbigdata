@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reddit Sentiment Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root { --bg:#0f1116; --card:#1a1d27; --text:#e8e8ec; --muted:#9aa0ac;
+            --pos:#3fb950; --neg:#f85149; --accent:#58a6ff; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+           background:var(--bg); color:var(--text); }
+    header { padding:24px; border-bottom:1px solid #2a2e3a; }
+    h1 { margin:0; font-size:20px; }
+    p.sub { margin:4px 0 0; color:var(--muted); font-size:13px; }
+    main { max-width:900px; margin:0 auto; padding:24px; }
+    .controls { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:24px; }
+    .field { display:flex; flex-direction:column; gap:4px; }
+    .field label { font-size:12px; color:var(--muted); }
+    input { background:var(--card); border:1px solid #2a2e3a; color:var(--text);
+            padding:10px 12px; border-radius:8px; font-size:14px; min-width:160px; }
+    button { background:var(--accent); color:#0b0d12; border:none; padding:11px 18px;
+             border-radius:8px; font-weight:600; cursor:pointer; font-size:14px; }
+    button:hover { opacity:.9; }
+    .cards { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:24px; }
+    .card { flex:1; min-width:200px; background:var(--card); border:1px solid #2a2e3a;
+            border-radius:12px; padding:18px; }
+    .card .kw { font-size:13px; color:var(--muted); text-transform:lowercase; }
+    .card .pct { font-size:34px; font-weight:700; margin-top:6px; }
+    .card .meta { font-size:12px; color:var(--muted); margin-top:4px; }
+    .chart-wrap { background:var(--card); border:1px solid #2a2e3a; border-radius:12px; padding:18px; }
+    .status { color:var(--muted); font-size:13px; margin-top:12px; min-height:18px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Reddit Sentiment Dashboard - Group 11 (W3/A)</h1>
+    <p1 class="sub">Enter two keywords to compare how sentiment toward them evolves over time. <br></p1>
+       <p>Current mock data keywords available: Apple, Android, Tesla, Google, Bitcoin, Windows,Linux, Netflix, Spotify, Amazon</p>
+  </header>
+
+  <main>
+    <div class="controls">
+      <div class="field">
+        <label for="kw1">Keyword 1</label>
+        <input id="kw1" value="apple" />
+      </div>
+      <div class="field">
+        <label for="kw2">Keyword 2</label>
+        <input id="kw2" value="android" />
+      </div>
+      <button id="go">Compare</button>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="kw" id="c1-kw">keyword 1</div>
+        <div class="pct" id="c1-pct">--%</div>
+        <div class="meta" id="c1-meta">positive · waiting for data</div>
+      </div>
+      <div class="card">
+        <div class="kw" id="c2-kw">keyword 2</div>
+        <div class="pct" id="c2-pct">--%</div>
+        <div class="meta" id="c2-meta">positive · waiting for data</div>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <canvas id="chart" height="120"></canvas>
+    </div>
+    <div class="status" id="status"></div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let chart;
+
+    function fmtTime(unixSeconds) {
+      const d = new Date(unixSeconds * 1000);
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
+    function toSeries(points) {
+      return points.map(p => ({ x: fmtTime(p.window_end), y: Math.round(p.positive_ratio * 100) }));
+    }
+
+    function updateCard(prefix, kw, points) {
+      $(prefix + "-kw").textContent = kw;
+      if (!points.length) {
+        $(prefix + "-pct").textContent = "--%";
+        $(prefix + "-meta").textContent = "no data yet";
+        return;
+      }
+      const last = points[points.length - 1];
+      $(prefix + "-pct").textContent = Math.round(last.positive_ratio * 100) + "%";
+      $(prefix + "-meta").textContent =
+        "positive · " + last.comment_count + " comments in last window";
+    }
+
+    function render(kw1, kw2, s1, s2) {
+      const labels = (s1.length >= s2.length ? s1 : s2).map(p => p.x);
+      const data = {
+        labels,
+        datasets: [
+          { label: kw1, data: s1.map(p => p.y), borderColor: "#58a6ff",
+            backgroundColor: "transparent", tension: .3 },
+          { label: kw2, data: s2.map(p => p.y), borderColor: "#f0883e",
+            backgroundColor: "transparent", tension: .3 },
+        ],
+      };
+      const opts = {
+        responsive: true,
+        scales: {
+          y: { min: 0, max: 100, title: { display: true, text: "% positive" },
+               ticks: { color: "#9aa0ac" }, grid: { color: "#2a2e3a" } },
+          x: { ticks: { color: "#9aa0ac", maxTicksLimit: 8 }, grid: { color: "#2a2e3a" } },
+        },
+        plugins: { legend: { labels: { color: "#e8e8ec" } } },
+      };
+      if (chart) { chart.data = data; chart.options = opts; chart.update(); }
+      else { chart = new Chart($("chart"), { type: "line", data, options: opts }); }
+    }
+
+    async function load() {
+      const kw1 = $("kw1").value.trim();
+      const kw2 = $("kw2").value.trim();
+      if (!kw1 || !kw2) { $("status").textContent = "Enter both keywords."; return; }
+      try {
+        const res = await fetch(`/api/compare?keyword1=${encodeURIComponent(kw1)}&keyword2=${encodeURIComponent(kw2)}`);
+        const json = await res.json();
+        const p1 = json.keyword1.points, p2 = json.keyword2.points;
+        updateCard("c1", kw1, p1);
+        updateCard("c2", kw2, p2);
+        render(kw1, kw2, toSeries(p1), toSeries(p2));
+        $("status").textContent = `Updated ${new Date().toLocaleTimeString()}  ·  ${p1.length}/${p2.length} points`;
+      } catch (e) {
+        $("status").textContent = "Error fetching data: " + e.message;
+      }
+    }
+
+    $("go").addEventListener("click", load);
+    load();
+    // auto-refresh every 5s so the chart "lives" as new windows arrive
+    setInterval(load, 5000);
+  </script>
+</body>
+</html>
