@@ -13,10 +13,6 @@ import json
 import logging
 from typing import Any
 
-from pyflink.common.typeinfo import Types
-from pyflink.datastream import OutputTag
-from pyflink.datastream.functions import ProcessFunction
-
 from config.settings import REQUIRED_FIELDS
 from flink_job.preprocessing.cleaner import TextCleaner
 from flink_job.preprocessing.language_detector import detect_language
@@ -24,9 +20,57 @@ from flink_job.preprocessing.tokenizer import tokenize
 
 log = logging.getLogger("flink_job.parse")
 
-MALFORMED_TAG = OutputTag("malformed-records", Types.STRING())
-
 DELETED_BODIES = frozenset({"[deleted]", "[removed]"})
+
+# Flink imports are optional so unit tests can run without pyflink installed
+try:
+    from pyflink.common.typeinfo import Types
+    from pyflink.datastream import OutputTag
+    from pyflink.datastream.functions import ProcessFunction
+    MALFORMED_TAG = OutputTag("malformed-records", Types.STRING())
+
+    class ParseCommentFunction(ProcessFunction):
+        MALFORMED_TAG = MALFORMED_TAG
+
+        def __init__(self, preprocess_config: dict):
+            self._preprocess_config = preprocess_config
+
+        def open(self, runtime_context):
+            cfg = self._preprocess_config
+            self._cleaner = TextCleaner(
+                remove_urls=cfg["remove_urls"],
+                remove_markdown=cfg["remove_markdown"],
+                lowercase=cfg["lowercase"],
+            )
+            self._remove_stopwords = cfg["remove_stopwords"]
+            self._stem = cfg["stem"]
+
+        def process_element(self, value, ctx: ProcessFunction.Context):
+            raw = value if isinstance(value, str) else value.decode("utf-8", errors="replace")
+            record, err = parse_comment_payload(raw)
+
+            if record is None:
+                malformed = {
+                    "raw": raw[:2000],
+                    "error": err,
+                    "ingest_ts": ctx.timestamp() if ctx.timestamp() is not None else 0,
+                }
+                ctx.output(self.MALFORMED_TAG, json.dumps(malformed, ensure_ascii=False))
+                log.debug("Malformed record: %s", err)
+                return
+
+            cleaned = build_cleaned_record(
+                record,
+                self._cleaner,
+                remove_stopwords=self._remove_stopwords,
+                stem=self._stem,
+            )
+            yield cleaned
+
+except ImportError:
+    # Running outside Flink (e.g. unit tests) — Flink classes not available
+    MALFORMED_TAG = None
+    ParseCommentFunction = None
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -92,52 +136,13 @@ def build_cleaned_record(
 
     return {
         "id": comment["id"],
-        "author": comment["author"],       # was missing before — now preserved
+        "author": comment["author"],
         "created_utc": comment["created_utc"],
         "subreddit": comment["subreddit"],
-        "language": lang,                  # NEW — enables multilingual analysis
+        "language": lang,
         "original_body": original,
         "cleaned_body": cleaned,
         "tokens": tokens,
         "score": comment["score"],
         "controversiality": comment["controversiality"],
     }
-
-
-class ParseCommentFunction(ProcessFunction):
-    MALFORMED_TAG = MALFORMED_TAG
-
-    def __init__(self, preprocess_config: dict):
-        self._preprocess_config = preprocess_config
-
-    def open(self, runtime_context):
-        cfg = self._preprocess_config
-        self._cleaner = TextCleaner(
-            remove_urls=cfg["remove_urls"],
-            remove_markdown=cfg["remove_markdown"],
-            lowercase=cfg["lowercase"],
-        )
-        self._remove_stopwords = cfg["remove_stopwords"]
-        self._stem = cfg["stem"]
-
-    def process_element(self, value, ctx: ProcessFunction.Context):
-        raw = value if isinstance(value, str) else value.decode("utf-8", errors="replace")
-        record, err = parse_comment_payload(raw)
-
-        if record is None:
-            malformed = {
-                "raw": raw[:2000],
-                "error": err,
-                "ingest_ts": ctx.timestamp() if ctx.timestamp() is not None else 0,
-            }
-            ctx.output(self.MALFORMED_TAG, json.dumps(malformed, ensure_ascii=False))
-            log.debug("Malformed record: %s", err)
-            return
-
-        cleaned = build_cleaned_record(
-            record,
-            self._cleaner,
-            remove_stopwords=self._remove_stopwords,
-            stem=self._stem,
-        )
-        yield cleaned
