@@ -1,7 +1,10 @@
 apache-flink==1.18.1
 python-dotenv==1.0.1
 
-# Preprocessing (optional stemming; lightweight tokenizer)
+# Language detection (new - enables multilingual pipeline)
+langdetect==1.0.9
+
+# Preprocessing
 nltk==3.9.1
 
 # Output validation script
