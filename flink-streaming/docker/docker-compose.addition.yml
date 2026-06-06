@@ -1,0 +1,3 @@
+# Deprecated: use split compose instead.
+#   kafka-producer/docker/docker-compose.yml  → Kafka
+#   flink-streaming/docker/docker-compose.yml → Flink (joins network bd_streaming)

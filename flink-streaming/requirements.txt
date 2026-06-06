@@ -1,0 +1,11 @@
+apache-flink==1.18.1
+python-dotenv==1.0.1
+
+# Preprocessing (optional stemming; lightweight tokenizer)
+nltk==3.9.1
+
+# Output validation script
+confluent-kafka==2.3.0
+
+# Tests
+pytest==8.3.3

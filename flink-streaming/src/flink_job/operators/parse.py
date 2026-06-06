@@ -1,0 +1,138 @@
+"""
+JSON parsing and record validation for Reddit Kafka messages.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+from pyflink.common.typeinfo import Types
+from pyflink.datastream import OutputTag
+from pyflink.datastream.functions import ProcessFunction
+
+from config.settings import REQUIRED_FIELDS
+
+MALFORMED_TAG = OutputTag("malformed-records", Types.STRING())
+from flink_job.preprocessing.cleaner import TextCleaner
+from flink_job.preprocessing.tokenizer import tokenize
+
+log = logging.getLogger("flink_job.parse")
+
+DELETED_BODIES = frozenset({"[deleted]", "[removed]"})
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_comment_payload(raw: str) -> tuple[dict[str, Any] | None, str | None]:
+    """
+    Parse UTF-8 JSON string into a normalized comment dict.
+    Returns (record, error_reason).
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return None, f"json_decode_error: {exc}"
+
+    if not isinstance(data, dict):
+        return None, "root_not_object"
+
+    missing = REQUIRED_FIELDS - data.keys()
+    if missing:
+        return None, f"missing_fields: {sorted(missing)}"
+
+    body = data.get("body")
+    if not isinstance(body, str) or not body.strip():
+        return None, "empty_body"
+    if body in DELETED_BODIES:
+        return None, "deleted_body"
+
+    created_utc = _safe_int(data.get("created_utc"), default=-1)
+    if created_utc < 0:
+        return None, "invalid_created_utc"
+
+    return {
+        "id": str(data["id"]),
+        "author": str(data.get("author", "")),
+        "created_utc": created_utc,
+        "body": body,
+        "score": _safe_int(data.get("score"), 0),
+        "subreddit": str(data.get("subreddit", "")),
+        "controversiality": _safe_int(data.get("controversiality"), 0),
+    }, None
+
+
+def build_cleaned_record(
+    comment: dict[str, Any],
+    cleaner: TextCleaner,
+    *,
+    remove_stopwords: bool = False,
+    stem: bool = False,
+) -> dict[str, Any]:
+    original = comment["body"]
+    cleaned = cleaner.clean(original)
+    tokens = tokenize(
+        cleaned,
+        remove_stopwords=remove_stopwords,
+        stem=stem,
+    )
+    return {
+        "id": comment["id"],
+        "created_utc": comment["created_utc"],
+        "subreddit": comment["subreddit"],
+        "original_body": original,
+        "cleaned_body": cleaned,
+        "tokens": tokens,
+        "score": comment["score"],
+        "controversiality": comment["controversiality"],
+    }
+
+
+class ParseCommentFunction(ProcessFunction):
+    """
+    Parses raw Kafka strings; emits valid comments on the main output
+    and malformed payloads on a side output tag.
+    """
+
+    MALFORMED_TAG = MALFORMED_TAG
+
+    def __init__(self, preprocess_config: dict):
+        self._preprocess_config = preprocess_config
+
+    def open(self, runtime_context):
+        cfg = self._preprocess_config
+        self._cleaner = TextCleaner(
+            remove_urls=cfg["remove_urls"],
+            remove_markdown=cfg["remove_markdown"],
+            lowercase=cfg["lowercase"],
+        )
+        self._remove_stopwords = cfg["remove_stopwords"]
+        self._stem = cfg["stem"]
+
+    def process_element(self, value, ctx: ProcessFunction.Context):
+        raw = value if isinstance(value, str) else value.decode("utf-8", errors="replace")
+        record, err = parse_comment_payload(raw)
+
+        if record is None:
+            malformed = {
+                "raw": raw[:2000],
+                "error": err,
+                "ingest_ts": ctx.timestamp() if ctx.timestamp() is not None else 0,
+            }
+            ctx.output(self.MALFORMED_TAG, json.dumps(malformed, ensure_ascii=False))
+            log.debug("Malformed record: %s", err)
+            return
+
+        cleaned = build_cleaned_record(
+            record,
+            self._cleaner,
+            remove_stopwords=self._remove_stopwords,
+            stem=self._stem,
+        )
+        yield cleaned
