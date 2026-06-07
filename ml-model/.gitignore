@@ -1,0 +1,28 @@
+# Environment
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Tests
+.pytest_cache/
+.coverage
+
+# --- ML artifacts: never commit trained models or datasets (too large) ---
+models/
+data/*.jsonl
+data/*.csv
+*.pkl
+*.joblib
+*.model
+*.kv
+*.npy
+
+# IDE
+.idea/
+.vscode/
+*.swp
