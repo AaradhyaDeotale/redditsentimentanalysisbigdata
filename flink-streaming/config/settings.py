@@ -9,12 +9,20 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=False means Docker environment variables take priority over .env file
+load_dotenv(override=False)
 
 
 def _env_bool(key: str, default: bool = False) -> bool:
     raw = os.getenv(key, "1" if default else "0").strip().lower()
     return raw in ("1", "true", "yes", "on")
+
+
+def _env_list(key: str, default: str = "") -> list[str]:
+    raw = os.getenv(key, default).strip()
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 @dataclass(frozen=True)
@@ -24,7 +32,7 @@ class KafkaSettings:
     output_topic: str
     malformed_topic: str
     consumer_group: str
-    starting_offset: str  # "earliest" | "latest"
+    starting_offset: str
 
 
 @dataclass(frozen=True)
@@ -49,7 +57,8 @@ class AppSettings:
     kafka: KafkaSettings
     flink: FlinkSettings
     preprocess: PreprocessSettings
-    output_sink: str  # "kafka" | "file"
+    keywords: list[str]
+    output_sink: str
     output_file_path: str
     log_level: str
 
@@ -82,6 +91,7 @@ def load_settings() -> AppSettings:
             remove_stopwords=_env_bool("PREPROCESS_REMOVE_STOPWORDS", False),
             stem=_env_bool("PREPROCESS_STEM", False),
         ),
+        keywords=_env_list("KEYWORD_FILTER"),
         output_sink=os.getenv("OUTPUT_SINK", "kafka").strip().lower(),
         output_file_path=os.getenv("OUTPUT_FILE_PATH", "output/cleaned_comments.jsonl"),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),

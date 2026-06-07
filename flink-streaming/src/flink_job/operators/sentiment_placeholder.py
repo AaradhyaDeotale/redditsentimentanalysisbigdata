@@ -1,6 +1,5 @@
 """
 Placeholder sentiment scoring interface for future ML integration.
-No model training or inference is performed here.
 """
 
 from __future__ import annotations
@@ -8,20 +7,14 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from pyflink.datastream.functions import MapFunction
-
 
 class SentimentScorer(ABC):
-    """Contract for plugging in a trained sentiment model later."""
-
     @abstractmethod
     def score(self, cleaned_body: str, tokens: list[str]) -> dict[str, Any]:
-        """Return sentiment metadata to attach to each record."""
+        pass
 
 
 class NullSentimentScorer(SentimentScorer):
-    """Default no-op scorer until ML teammate wires a real model."""
-
     def score(self, cleaned_body: str, tokens: list[str]) -> dict[str, Any]:
         return {
             "sentiment_label": None,
@@ -31,17 +24,22 @@ class NullSentimentScorer(SentimentScorer):
         }
 
 
-class SentimentPlaceholderFunction(MapFunction):
-    """
-    Flink MapFunction that reserves output fields for future sentiment analysis.
-    """
+try:
+    from pyflink.datastream.functions import MapFunction
 
-    def __init__(self):
-        self._scorer: SentimentScorer | None = None
+    class SentimentPlaceholderFunction(MapFunction):
+        def __init__(self):
+            self._scorer = None
 
-    def open(self, runtime_context):
-        self._scorer = NullSentimentScorer()
+        def open(self, runtime_context):
+            self._scorer = NullSentimentScorer()
 
-    def map(self, value: dict) -> dict:
-        meta = self._scorer.score(value.get("cleaned_body", ""), value.get("tokens", []))
-        return {**value, **meta}
+        def map(self, value: dict) -> dict:
+            meta = self._scorer.score(
+                value.get("cleaned_body", ""),
+                value.get("tokens", [])
+            )
+            return {**value, **meta}
+
+except ImportError:
+    SentimentPlaceholderFunction = None
