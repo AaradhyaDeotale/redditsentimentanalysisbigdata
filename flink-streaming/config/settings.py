@@ -9,7 +9,8 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=False means Docker environment variables take priority over .env file
+load_dotenv(override=False)
 
 
 def _env_bool(key: str, default: bool = False) -> bool:
@@ -18,7 +19,6 @@ def _env_bool(key: str, default: bool = False) -> bool:
 
 
 def _env_list(key: str, default: str = "") -> list[str]:
-    """Parse a comma-separated env var into a list of strings."""
     raw = os.getenv(key, default).strip()
     if not raw:
         return []

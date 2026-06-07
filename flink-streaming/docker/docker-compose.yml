@@ -1,41 +1,81 @@
-# Flink cluster only — requires Kafka from kafka-producer compose (network bd_streaming).
-#
-# Usage:
-#   1) cd ../kafka-producer && docker compose -f docker/docker-compose.yml up -d
-#   2) cd ../flink-streaming && docker compose -f docker/docker-compose.yml up -d --build
-#   3) Flink UI: http://localhost:8081
-
-x-flink-build: &flink-build
-  build:
-    context: ..
-    dockerfile: docker/Dockerfile
-  image: flink-reddit:1.18
-
 services:
   jobmanager:
-    <<: *flink-build
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      platforms:
+        - linux/arm64
+    image: flink-reddit-jobmanager:1.18
     container_name: flink-jobmanager
     command: jobmanager
     ports:
       - "8081:8081"
+    environment:
+      KAFKA_BROKER: kafka:9094
+      KAFKA_INPUT_TOPIC: reddit-comments
+      KAFKA_OUTPUT_TOPIC: reddit-comments-cleaned
+      KAFKA_MALFORMED_TOPIC: reddit-comments-malformed
+      KAFKA_STARTING_OFFSET: earliest
+      KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
+      KEYWORD_FILTER: apple,android
+      FLINK_JOB_NAME: reddit-comment-preprocessor
+      FLINK_PARALLELISM: "2"
+      FLINK_CHECKPOINT_INTERVAL_MS: "60000"
+      WATERMARK_MAX_OUT_OF_ORDER_SEC: "5"
+      PREPROCESS_REMOVE_URLS: "1"
+      PREPROCESS_REMOVE_MARKDOWN: "1"
+      PREPROCESS_LOWERCASE: "0"
+      PREPROCESS_REMOVE_STOPWORDS: "0"
+      PREPROCESS_STEM: "0"
+      OUTPUT_SINK: kafka
+      LOG_LEVEL: INFO
     volumes:
       - flink-checkpoints:/opt/flink/checkpoints
     networks:
       - bd_streaming
 
   taskmanager:
-    <<: *flink-build
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      platforms:
+        - linux/arm64
+    image: flink-reddit-taskmanager:1.18
     container_name: flink-taskmanager
     command: taskmanager
     depends_on:
       - jobmanager
+    environment:
+      KAFKA_BROKER: kafka:9094
+      KAFKA_INPUT_TOPIC: reddit-comments
+      KAFKA_OUTPUT_TOPIC: reddit-comments-cleaned
+      KAFKA_MALFORMED_TOPIC: reddit-comments-malformed
+      KAFKA_STARTING_OFFSET: earliest
+      KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
+      KEYWORD_FILTER: apple,android
+      FLINK_JOB_NAME: reddit-comment-preprocessor
+      FLINK_PARALLELISM: "2"
+      FLINK_CHECKPOINT_INTERVAL_MS: "60000"
+      WATERMARK_MAX_OUT_OF_ORDER_SEC: "5"
+      PREPROCESS_REMOVE_URLS: "1"
+      PREPROCESS_REMOVE_MARKDOWN: "1"
+      PREPROCESS_LOWERCASE: "0"
+      PREPROCESS_REMOVE_STOPWORDS: "0"
+      PREPROCESS_STEM: "0"
+      OUTPUT_SINK: kafka
+      LOG_LEVEL: INFO
     volumes:
       - flink-checkpoints:/opt/flink/checkpoints
     networks:
       - bd_streaming
 
   flink-job:
-    <<: *flink-build
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      platforms:
+        - linux/arm64
+    image: flink-reddit-job:1.18
     container_name: flink-reddit-job
     depends_on:
       - jobmanager
@@ -46,14 +86,19 @@ services:
       KAFKA_OUTPUT_TOPIC: reddit-comments-cleaned
       KAFKA_MALFORMED_TOPIC: reddit-comments-malformed
       KAFKA_STARTING_OFFSET: earliest
+      KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
+      KEYWORD_FILTER: apple,android
+      FLINK_JOB_NAME: reddit-comment-preprocessor
       FLINK_PARALLELISM: "2"
-      OUTPUT_SINK: kafka
-      LOG_LEVEL: INFO
+      FLINK_CHECKPOINT_INTERVAL_MS: "60000"
+      WATERMARK_MAX_OUT_OF_ORDER_SEC: "5"
       PREPROCESS_REMOVE_URLS: "1"
       PREPROCESS_REMOVE_MARKDOWN: "1"
       PREPROCESS_LOWERCASE: "0"
       PREPROCESS_REMOVE_STOPWORDS: "0"
       PREPROCESS_STEM: "0"
+      OUTPUT_SINK: kafka
+      LOG_LEVEL: INFO
     volumes:
       - ../output:/opt/flink/output
     command:

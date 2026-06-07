@@ -1,4 +1,3 @@
-# Flink cluster configuration (JobManager + TaskManagers)
 jobmanager.rpc.address: jobmanager
 jobmanager.rpc.port: 6123
 blob.server.port: 6124
@@ -6,7 +5,6 @@ query.server.port: 6125
 rest.port: 8081
 rest.address: 0.0.0.0
 
-# Required memory settings (partial config mount was missing these)
 jobmanager.memory.process.size: 1600m
 taskmanager.memory.process.size: 1728m
 taskmanager.numberOfTaskSlots: 2
@@ -18,7 +16,6 @@ state.backend: filesystem
 state.checkpoints.dir: file:///opt/flink/checkpoints
 state.savepoints.dir: file:///opt/flink/savepoints
 
-# PyFlink / Python
 python.executable: python3
 python.client.executable: python3
 python.fn-execution.bundle.size: 1000
