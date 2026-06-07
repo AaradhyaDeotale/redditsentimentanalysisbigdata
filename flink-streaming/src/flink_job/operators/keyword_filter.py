@@ -2,10 +2,10 @@
 Keyword filtering for Reddit comments.
 
 The project spec (Stage 1) requires an operator that tracks sentiment
-for specific keywords like "Apple" vs "Android".
+for specific keywords like Apple vs Android.
 
 This operator tags each comment with which keywords it matched.
-Records are NOT dropped - even non-matching ones flow through.
+Records are not dropped and even non-matching ones flow through.
 """
 
 from __future__ import annotations
