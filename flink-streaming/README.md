@@ -12,7 +12,7 @@ Apache Flink (PyFlink) streaming pipeline for the university big-data project.
 
 | Step | Component | Topic | Folder |
 |------|-----------|-------|--------|
-| 1 | Kafka broker | — | `kafka-producer/docker/` |
+| 1 | Kafka broker | - | `kafka-producer/docker/` |
 | 2 | Producer script | `reddit-comments` | `kafka-producer/` |
 | 3 | **This Flink job** | `reddit-comments` → `reddit-comments-cleaned` | `flink-streaming/` |
 | 4 | Future ML | `reddit-comments-cleaned` | (another teammate) |
@@ -126,14 +126,14 @@ flink-streaming/
 
 ---
 
-## Run instructions (Docker — recommended)
+## Run instructions (Docker - recommended)
 
 ### Prerequisites
 
 - Docker Desktop running
 - **Start Kafka before Flink** (Flink needs network `bd_streaming`)
 
-### Step 1 — Start Kafka (teammate folder, required first)
+### Step 1 - Start Kafka (teammate folder, required first)
 
 ```powershell
 cd ..\kafka-producer
@@ -146,7 +146,7 @@ Wait until healthy (~10 s). Optional check:
 docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
 ```
 
-### Step 2 — Start Flink (this folder)
+### Step 2 - Start Flink (this folder)
 
 ```powershell
 cd ..\flink-streaming
@@ -170,7 +170,7 @@ Look for: `Job has been submitted with JobID ...`
 
 **Check job running:** open http://localhost:8081 → **Running Jobs** → `reddit-comment-preprocessor`
 
-### Step 3 — Send data (kafka-producer on host)
+### Step 3 - Send data (kafka-producer on host)
 
 ```powershell
 cd ..\kafka-producer
@@ -183,15 +183,15 @@ Expected: `Total records sent: 4`
 
 > **Note:** If the Flink job started with `KAFKA_STARTING_OFFSET=latest` and you sent data *before* the job was running, run the producer again after the job is RUNNING, or set `KAFKA_STARTING_OFFSET=earliest` in compose and restart.
 
-### Step 4 — See cleaned output
+### Step 4 - See cleaned output
 
-**Option A — Kafka console:**
+**Option A - Kafka console:**
 
 ```powershell
 docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic reddit-comments-cleaned --from-beginning --max-messages 5
 ```
 
-**Option B — Validation script:**
+**Option B - Validation script:**
 
 ```powershell
 cd ..\flink-streaming
@@ -290,7 +290,7 @@ docker compose -f docker/docker-compose.yml down
 
 | Issue | Fix |
 |-------|-----|
-| http://localhost:8081 refused | `docker ps` — `flink-jobmanager` must be **Up**; check `docker logs flink-jobmanager` |
+| http://localhost:8081 refused | `docker ps` - `flink-jobmanager` must be **Up**; check `docker logs flink-jobmanager` |
 | `network bd_streaming not found` | Start **kafka-producer** compose first |
 | `flink-reddit-job` shows `-m: command not found` | Rebuild: fixed in current `docker-compose.yml` (single-line command) |
 | `No module named flink_job` | Rebuild image (`PYTHONPATH` fix in Dockerfile) |
