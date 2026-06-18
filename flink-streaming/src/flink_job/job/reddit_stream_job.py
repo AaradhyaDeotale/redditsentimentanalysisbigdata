@@ -15,6 +15,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+
+
+
 
 from pyflink.common import Types, WatermarkStrategy
 from pyflink.common.serialization import Encoder, SimpleStringSchema
@@ -23,12 +27,16 @@ from pyflink.common.watermark_strategy import TimestampAssigner
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.file_system import FileSink, OutputFileConfig, RollingPolicy
 from pyflink.datastream.functions import MapFunction
+from pyflink.common.time import Time
+from pyflink.datastream.window import TumblingEventTimeWindows
 
 from config.settings import AppSettings
 from flink_job.operators.keyword_filter import KeywordFilterFunction
 from flink_job.operators.parse import MALFORMED_TAG, ParseCommentFunction
 from flink_job.operators.sentiment_placeholder import SentimentPlaceholderFunction
 from flink_job.sources.kafka_io import build_kafka_sink, build_kafka_source
+from flink_job.operators.sentiment_ml import SentimentMLFunction
+from flink_job.operators.sentiment_window import KeywordFanoutFunction, SentimentWindowFunction
 
 log = logging.getLogger("flink_job.pipeline")
 
@@ -96,8 +104,8 @@ def build_pipeline(env: StreamExecutionEnvironment, settings: AppSettings) -> No
     # Stage 4: Sentiment placeholder - hook for P4 ML model
     sentiment_stream = (
         keyword_stream
-        .map(SentimentPlaceholderFunction(), output_type=Types.PICKLED_BYTE_ARRAY())
-        .name("sentiment-placeholder")
+        .map(SentimentMLFunction(), output_type=Types.PICKLED_BYTE_ARRAY())
+        .name("sentiment-ml")
     )
 
     # Stage 5: Assign event-time watermarks from created_utc
@@ -112,6 +120,28 @@ def build_pipeline(env: StreamExecutionEnvironment, settings: AppSettings) -> No
     cleaned_stream = sentiment_stream.assign_timestamps_and_watermarks(
         wm_strategy
     ).name("event-time-assignment")
+
+    # Per-keyword sentiment over tumbling event-time windows -> dashboard
+    results_topic = os.getenv("KAFKA_RESULTS_TOPIC", "sentiment-results")
+    window_sec = int(os.getenv("WINDOW_SIZE_SEC", "3600"))
+
+    results_stream = (
+        cleaned_stream
+        .flat_map(KeywordFanoutFunction(), output_type=Types.PICKLED_BYTE_ARRAY())
+        .name("keyword-fanout")
+        .key_by(lambda r: r["keyword"], key_type=Types.STRING())
+        .window(TumblingEventTimeWindows.of(Time.seconds(window_sec)))
+        .process(SentimentWindowFunction(), output_type=Types.PICKLED_BYTE_ARRAY())
+        .name("sentiment-window-agg")
+    )
+
+    (
+        results_stream
+        .map(ToJsonString(), output_type=Types.STRING())
+        .name("results-to-json")
+        .sink_to(build_kafka_sink(kafka, topic=results_topic))
+        .name("kafka-sentiment-results-sink")
+    )
 
     # Stage 6: Serialize to JSON strings
     json_stream = (

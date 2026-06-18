@@ -1,0 +1,22 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+
+# Test / cache
+.pytest_cache/
+.coverage
+
+# Local env files
+.env
+
+# Large artifacts — never commit
+*.zst
+*.jsonl
+models/
+*.pkl
+*.joblib

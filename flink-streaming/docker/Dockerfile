@@ -26,6 +26,12 @@ WORKDIR /opt/flink/usrlib
 COPY docker/requirements-docker.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir --timeout 300 --retries 5 -r /tmp/requirements.txt
 
+# Make the ML model package importable by the scorer operator
+RUN pip3 install --no-cache-dir scikit-learn==1.4.2 gensim==4.3.3 numpy==1.26.4 \
+        scipy==1.12.0 joblib==1.4.2 vaderSentiment==3.3.2
+COPY --from=mlmodel_src src/ml_model /opt/flink/usrlib/src/ml_model
+ENV MODEL_DIR=/models
+
 COPY src/ /opt/flink/usrlib/src/
 COPY config/ /opt/flink/usrlib/config/
 COPY docker/conf/flink-conf.yaml /opt/flink/conf/flink-conf.yaml
