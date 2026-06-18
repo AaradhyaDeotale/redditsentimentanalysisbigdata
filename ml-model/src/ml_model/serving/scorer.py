@@ -43,8 +43,14 @@ class ModelScorer:
         return self._model is not None
 
     def maybe_reload(self) -> bool:
-        """Reload if tracking 'latest' and a newer version exists. Returns True if reloaded."""
+        """Pick up a model that did not exist at startup, or a newer 'latest'."""
         if self._requested != "latest":
+            if self._model is None:
+                try:
+                    self.load()
+                    return True
+                except FileNotFoundError:
+                    return False
             return False
         latest = self._store.latest_version()
         if latest and latest != self._version:
@@ -55,12 +61,11 @@ class ModelScorer:
 
     def score(self, tokens: Sequence[str]) -> dict[str, Any]:
         if self._model is None:
-            self.load()
+            try:
+                self.load()
+            except FileNotFoundError:
+                return self._result(None, None, STATUS_NO_MODEL)
         toks = [str(t) for t in (tokens or []) if str(t).strip()]
-        if len(toks) < self._min_tokens:
-            return self._result(None, None, STATUS_SKIPPED)
-        pred = self._model.predict_one(toks)
-        return self._result(pred.label, round(pred.score, 4), STATUS_SCORED)
 
     def _result(self, label, score, status) -> dict[str, Any]:
         return {

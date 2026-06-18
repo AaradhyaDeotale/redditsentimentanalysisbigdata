@@ -33,10 +33,11 @@ class RealSentimentScorer(SentimentScorer):
 
     def _ensure_loaded(self) -> None:
         if self._scorer is None:
-            from ml_model.serving.scorer import ModelScorer  # imported lazily on the worker
-            self._scorer = ModelScorer(self._model_dir, min_tokens=self._min_tokens).load()
-            log.info("Loaded sentiment model '%s' from %s",
-                     self._scorer.model_version, self._model_dir)
+            from ml_model.serving.scorer import ModelScorer
+            # Don't eager-load: if no model exists yet, score() returns
+            # "no_model_available" and picks it up as soon as it appears.
+            self._scorer = ModelScorer(self._model_dir, min_tokens=self._min_tokens)
+            log.info("Sentiment scorer ready (model dir: %s)", self._model_dir)
 
     def score(self, cleaned_body: str, tokens: list[str]) -> dict[str, Any]:
         self._ensure_loaded()
