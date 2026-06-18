@@ -87,3 +87,20 @@ cp .env.example .env               # then edit if needed
 # 4. Run the tests (should pass on a fresh checkout)
 pytest tests/ -v
 ```
+
+## The P4 pipeline, end to end
+
+1. Collect a corpus of cleaned comments from Kafka (Phase 1) -> data/cleaned_comments.jsonl
+2. Label it with VADER (labels only):
+       python src/ml_model/labeling/label_corpus.py \
+           --input data/cleaned_comments.jsonl --output data/labeled_comments.jsonl
+3. Train our own model and save a version:
+       python src/ml_model/model/train.py \
+           --input data/labeled_comments.jsonl --feature tfidf
+4. The Flink scorer (flink-streaming) loads the latest model and scores the live
+   stream; the windowed aggregator publishes per-keyword sentiment to the
+   `sentiment-results` topic for the dashboard (P5).
+5. Retrain periodically; the scorer hot-reloads the new version:
+       python src/ml_model/retrain/retrain.py --input data/labeled_comments.jsonl
+
+Run all tests:  pytest tests/ -v

@@ -1,0 +1,24 @@
+# ML model (P4) — sentiment classifier dependencies.
+
+
+# --- Core ML ---
+numpy==1.26.4
+scipy==1.12.0
+scikit-learn==1.4.2
+gensim==4.3.3
+joblib==1.4.2
+
+# --- Labelling (lexicon — used ONLY to generate training labels) ---
+vaderSentiment==3.3.2
+
+# --- Data handling ---
+pandas==2.2.2
+
+# --- Kafka I/O: consume reddit-comments-cleaned, publish sentiment-results ---
+confluent-kafka==2.3.0
+
+# --- Config ---
+python-dotenv==1.0.1
+
+# --- Tests ---
+pytest==8.3.3
