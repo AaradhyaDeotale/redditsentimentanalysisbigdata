@@ -1,5 +1,6 @@
 # Dashboard (P5) — Web GUI + REST API
-
+# Important - DO NOT USE THIS BRANCH TO MERGE INTO MAIN; USE NEW BRANCH p5-dashboard-v2 INSTEAD
+# THIS BRANCH accidentally has the instructions to delete kafka-producer folder whenever it is merged into main which was an unintended consequence of me trying to keep my branch dashboard folder only. SO, instead I have created a new branch p5-dashboard-v2 from which i will continue and finish my work and merge into main from there.
 The serving and UI layer of the sentiment-analysis pipeline. It lets a user
 enter **two keywords** and shows the sentiment for each, plus how that
 sentiment **evolves over time**.
