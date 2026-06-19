@@ -1,5 +1,7 @@
 # Reddit Sentiment Analysis — Big Data Pipeline
-
+#Dashboard (P5) — Web GUI + REST API
+#Important - DO NOT USE THIS BRANCH TO MERGE INTO MAIN; USE NEW BRANCH p5-dashboard-v2 INSTEAD
+#THIS BRANCH accidentally has the instructions to delete kafka-producer folder whenever it is merged into main which was an unintended consequence of me trying to keep my branch dashboard folder only. SO, instead I have created a new branch p5-dashboard-v2 from which i will continue and finish my work and merge into main from there.
 A cloud-based, real-time sentiment analysis system built on a streaming Big Data
 pipeline. It ingests Reddit comments, processes them as a live stream, classifies
 their sentiment with a machine-learning model trained from scratch, and visualises
