@@ -62,7 +62,8 @@ seconds.
 
 ```bash
 cp .env.example .env       # then edit values
-# KAFKA_BROKER=localhost:9092   (local)  or  kafka:9092  (inside Docker Compose)
+# KAFKA_BROKER=localhost:9092,localhost:9095,localhost:9096   (local)
+#   or  kafka-1:9094,kafka-2:9094,kafka-3:9094  (inside Docker Compose)
 # KAFKA_TOPIC=sentiment-results
 uvicorn src.main:app --host 0.0.0.0 --port 8000
 ```
@@ -79,7 +80,7 @@ docker build -f docker/Dockerfile -t sentiment-dashboard .
 docker run -p 8000:8000 --env-file .env sentiment-dashboard
 ```
 
-For P6's full-stack Compose, this service just needs `KAFKA_BROKER=kafka:9092`
+For P6's full-stack Compose, this service needs `KAFKA_BROKER=kafka-1:9094,kafka-2:9094,kafka-3:9094`
 and to be on the same Docker network as the brokers.
 
 ---

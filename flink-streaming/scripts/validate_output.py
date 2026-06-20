@@ -2,7 +2,7 @@
 Read cleaned records from Kafka and verify JSON schema + emoji preservation.
 
 Usage:
-    python scripts/validate_output.py --broker localhost:9092 --topic reddit-comments-cleaned
+    python scripts/validate_output.py --broker localhost:9092,localhost:9095,localhost:9096 --topic reddit-comments-cleaned
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ REQUIRED_KEYS = {
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Validate Flink cleaned output topic")
-    p.add_argument("--broker", default=os.getenv("KAFKA_BROKER", "localhost:9092"))
+    p.add_argument("--broker", default=os.getenv("KAFKA_BROKER", "localhost:9092,localhost:9095,localhost:9096"))
     p.add_argument("--topic", default=os.getenv("KAFKA_OUTPUT_TOPIC", "reddit-comments-cleaned"))
     p.add_argument("--max", type=int, default=20)
     args = p.parse_args()

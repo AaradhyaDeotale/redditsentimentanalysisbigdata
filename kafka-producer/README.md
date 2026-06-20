@@ -44,7 +44,7 @@ python src/producer/producer.py
 Or override with CLI flags:
 
 ```bash
-python src/producer/producer.py --file /path/to/RC_2019-04.zst --broker localhost:9092 --topic reddit-comments --speed 10
+python src/producer/producer.py --file /path/to/RC_2019-04.zst --broker localhost:9092,localhost:9095,localhost:9096 --topic reddit-comments --speed 10
 ```
 
 ---
@@ -64,8 +64,8 @@ Runs 15+ tests covering: record parsing, date filtering, emoji preservation, del
 ```bash
 docker compose -f docker/docker-compose.yml up -d
 
-# Wait ~10 seconds then confirm it is ready:
-docker exec kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
+# Wait ~15 seconds then confirm the cluster is ready:
+docker exec kafka-1 kafka-topics.sh --bootstrap-server localhost:9092 --list
 ```
 
 ### Step 3 — Generate test data, send, verify
@@ -75,10 +75,10 @@ docker exec kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
 python data/make_test_data.py
 
 # Send to Kafka at 100x speed
-python src/producer/producer.py --file data/test_data.zst --broker localhost:9092 --speed 100
+python src/producer/producer.py --file data/test_data.zst --broker localhost:9092,localhost:9095,localhost:9096 --speed 100
 
 # Read back from Kafka and run all checks
-python src/producer/validate.py --broker localhost:9092
+python src/producer/validate.py --broker localhost:9092,localhost:9095,localhost:9096
 ```
 
 Expected output from `validate.py`:
@@ -117,7 +117,7 @@ docker build -f docker/Dockerfile -t reddit-kafka-producer .
 
 # Run (mount the .zst file into /data/)
 docker run --rm \
-  -e KAFKA_BROKER=kafka:9092 \
+  -e KAFKA_BROKER=kafka-1:9094,kafka-2:9094,kafka-3:9094 \
   -e KAFKA_TOPIC=reddit-comments \
   -e REPLAY_SPEED=10.0 \
   -v /path/to/RC_2019-04.zst:/data/RC_2019-04.zst:ro \
@@ -136,9 +136,11 @@ Add this service to a shared `docker-compose.yml`:
       context: ./kafka-producer
       dockerfile: docker/Dockerfile
     depends_on:
-      - kafka
+      - kafka-1
+      - kafka-2
+      - kafka-3
     environment:
-      KAFKA_BROKER: kafka:9092
+      KAFKA_BROKER: kafka-1:9094,kafka-2:9094,kafka-3:9094
       KAFKA_TOPIC:  reddit-comments
       REPLAY_SPEED: "10.0"
       ZST_FILE:     /data/RC_2019-04.zst
@@ -153,7 +155,7 @@ Add this service to a shared `docker-compose.yml`:
 | Variable       | Default           | Description                         |
 |----------------|-------------------|-------------------------------------|
 | `ZST_FILE`     | `RC_2019-04.zst`  | Path to the dataset file            |
-| `KAFKA_BROKER` | `localhost:9092`  | Kafka broker address                |
+| `KAFKA_BROKER` | `localhost:9092,localhost:9095,localhost:9096` | Kafka bootstrap servers (3-broker cluster) |
 | `KAFKA_TOPIC`  | `reddit-comments` | Topic to publish to                 |
 | `REPLAY_SPEED` | `1.0`             | Speed multiplier (10 = 10x faster)  |
 
@@ -183,7 +185,8 @@ kafka-producer/
 │   └── test_data.zst          # Generated — not committed to Git
 ├── docker/
 │   ├── Dockerfile
-│   └── docker-compose.yml     # Local Kafka (KRaft, no Zookeeper)
+│   ├── docker-compose.yml     # Local 3-broker Kafka (KRaft, no Zookeeper)
+│   └── brokers.env            # Bootstrap server strings (host + Docker)
 ├── tests/
 │   ├── conftest.py
 │   ├── test_producer.py       # Unit tests for parsing logic

@@ -12,7 +12,7 @@ Apache Flink (PyFlink) streaming pipeline for the university big-data project.
 
 | Step | Component | Topic | Folder |
 |------|-----------|-------|--------|
-| 1 | Kafka broker | - | `kafka-producer/docker/` |
+| 1 | Kafka cluster (3 brokers) | - | `kafka-producer/docker/` |
 | 2 | Producer script | `reddit-comments` | `kafka-producer/` |
 | 3 | **This Flink job** | `reddit-comments` → `reddit-comments-cleaned` | `flink-streaming/` |
 | 4 | Future ML | `reddit-comments-cleaned` | (another teammate) |
@@ -143,7 +143,7 @@ docker compose -f docker/docker-compose.yml up -d
 Wait until healthy (~10 s). Optional check:
 
 ```powershell
-docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+docker exec kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
 ```
 
 ### Step 2 - Start Flink (this folder)
@@ -176,7 +176,7 @@ Look for: `Job has been submitted with JobID ...`
 cd ..\kafka-producer
 pip install -r requirements.txt
 python data/make_test_data.py
-python src/producer/producer.py --file data/test_data.zst --broker localhost:9092 --speed 100
+python src/producer/producer.py --file data/test_data.zst --broker localhost:9092,localhost:9095,localhost:9096 --speed 100
 ```
 
 Expected: `Total records sent: 4`
@@ -188,7 +188,7 @@ Expected: `Total records sent: 4`
 **Option A - Kafka console:**
 
 ```powershell
-docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic reddit-comments-cleaned --from-beginning --max-messages 5
+docker exec kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic reddit-comments-cleaned --from-beginning --max-messages 5
 ```
 
 **Option B - Validation script:**
@@ -196,7 +196,7 @@ docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server lo
 ```powershell
 cd ..\flink-streaming
 pip install confluent-kafka
-python scripts/validate_output.py --broker localhost:9092 --topic reddit-comments-cleaned
+python scripts/validate_output.py --broker localhost:9092,localhost:9095,localhost:9096 --topic reddit-comments-cleaned
 ```
 
 **What you should see:** ~4 messages (from `test_data.zst`), emojis in `original_body`, URLs removed in `cleaned_body`, `tokens` array present.
@@ -204,7 +204,7 @@ python scripts/validate_output.py --broker localhost:9092 --topic reddit-comment
 **Malformed topic (usually empty for test data):**
 
 ```powershell
-docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic reddit-comments-malformed --from-beginning --max-messages 3
+docker exec kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic reddit-comments-malformed --from-beginning --max-messages 3
 ```
 
 ---
@@ -248,7 +248,7 @@ python src/flink_job/main.py
 
 | Variable | Default (Docker) | Description |
 |----------|------------------|-------------|
-| `KAFKA_BROKER` | `kafka:9094` in compose | Use `localhost:9092` only for host scripts |
+| `KAFKA_BROKER` | `kafka-1:9094,kafka-2:9094,kafka-3:9094` in compose | Host scripts: `localhost:9092,localhost:9095,localhost:9096` |
 | `KAFKA_INPUT_TOPIC` | `reddit-comments` | Must match producer topic |
 | `KAFKA_OUTPUT_TOPIC` | `reddit-comments-cleaned` | Preprocessed output |
 | `KAFKA_MALFORMED_TOPIC` | `reddit-comments-malformed` | Parse failures |
@@ -295,6 +295,6 @@ docker compose -f docker/docker-compose.yml down
 | `flink-reddit-job` shows `-m: command not found` | Rebuild: fixed in current `docker-compose.yml` (single-line command) |
 | `No module named flink_job` | Rebuild image (`PYTHONPATH` fix in Dockerfile) |
 | No messages on cleaned topic | Producer ran before job? Re-run producer; check Flink UI for FAILED job |
-| Flink cannot reach Kafka | Flink must use `kafka:9094`, not `localhost:9092` |
+| Flink cannot reach Kafka | Flink must use `kafka-1:9094,kafka-2:9094,kafka-3:9094`, not `localhost:9092` |
 | Container name already in use | `docker rm -f flink-jobmanager flink-taskmanager flink-reddit-job` then `up` again |
 | Emojis broken | Should not happen; JSON uses `ensure_ascii=False` |

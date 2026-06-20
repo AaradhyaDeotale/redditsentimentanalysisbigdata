@@ -20,7 +20,7 @@ COPY src/producer/producer.py src/producer/config.py ./
 # The .zst dataset is mounted at runtime via docker-compose volume.
 # Default path: /data/RC_2019-04.zst  (override with ZST_FILE env var)
 ENV ZST_FILE=/data/RC_2019-04.zst
-ENV KAFKA_BROKER=kafka:9092
+ENV KAFKA_BROKER=kafka-1:9094,kafka-2:9094,kafka-3:9094
 ENV KAFKA_TOPIC=reddit-comments
 ENV REPLAY_SPEED=1.0
 

@@ -84,7 +84,7 @@ def load_settings() -> AppSettings:
     """Build an AppSettings instance from the current environment."""
     return AppSettings(
         kafka=KafkaSettings(
-            broker=os.getenv("KAFKA_BROKER", "localhost:9092"),
+            broker=os.getenv("KAFKA_BROKER", "localhost:9092,localhost:9095,localhost:9096"),
             input_topic=os.getenv("KAFKA_INPUT_TOPIC", "reddit-comments-cleaned"),
             results_topic=os.getenv("KAFKA_RESULTS_TOPIC", "sentiment-results"),
             consumer_group=os.getenv("KAFKA_CONSUMER_GROUP", "ml-sentiment-scorer"),

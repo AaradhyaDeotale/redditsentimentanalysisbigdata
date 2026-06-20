@@ -176,8 +176,8 @@ def parse_args():
     )
     p.add_argument(
         "--broker", "-b",
-        default=os.getenv("KAFKA_BROKER", "localhost:9092"),
-        help="Kafka broker address (default: env KAFKA_BROKER or localhost:9092)",
+        default=os.getenv("KAFKA_BROKER", "localhost:9092,localhost:9095,localhost:9096"),
+        help="Kafka bootstrap servers (default: env KAFKA_BROKER or localhost:9092,localhost:9095,localhost:9096)",
     )
     p.add_argument(
         "--topic", "-t",

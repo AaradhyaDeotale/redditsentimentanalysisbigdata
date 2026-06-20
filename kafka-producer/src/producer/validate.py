@@ -3,7 +3,7 @@ validate.py – Reads messages back from Kafka and verifies correctness.
 
 Run AFTER the producer has finished sending test_data.zst:
 
-    python src/producer/validate.py --broker localhost:9092 --topic reddit-comments
+    python src/producer/validate.py --broker localhost:9092,localhost:9095,localhost:9096 --topic reddit-comments
 
 Checks:
   - Correct number of messages received
@@ -30,7 +30,7 @@ EXPECTED_COUNT = 4   # matches data/make_test_data.py valid records
 
 def parse_args():
     p = argparse.ArgumentParser(description="Kafka output validator")
-    p.add_argument("--broker", default=os.getenv("KAFKA_BROKER", "localhost:9092"))
+    p.add_argument("--broker", default=os.getenv("KAFKA_BROKER", "localhost:9092,localhost:9095,localhost:9096"))
     p.add_argument("--topic",  default=os.getenv("KAFKA_TOPIC",  "reddit-comments"))
     p.add_argument("--timeout", type=float, default=10.0,
                    help="Seconds to wait for messages before giving up")

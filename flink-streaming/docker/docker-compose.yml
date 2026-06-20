@@ -11,7 +11,7 @@ services:
     ports:
       - "8081:8081"
     environment:
-      KAFKA_BROKER: kafka:9094
+      KAFKA_BROKER: kafka-1:9094,kafka-2:9094,kafka-3:9094
       KAFKA_INPUT_TOPIC: reddit-comments
       KAFKA_OUTPUT_TOPIC: reddit-comments-cleaned
       KAFKA_MALFORMED_TOPIC: reddit-comments-malformed
@@ -46,7 +46,7 @@ services:
     depends_on:
       - jobmanager
     environment:
-      KAFKA_BROKER: kafka:9094
+      KAFKA_BROKER: kafka-1:9094,kafka-2:9094,kafka-3:9094
       KAFKA_INPUT_TOPIC: reddit-comments
       KAFKA_OUTPUT_TOPIC: reddit-comments-cleaned
       KAFKA_MALFORMED_TOPIC: reddit-comments-malformed
@@ -81,7 +81,7 @@ services:
       - jobmanager
       - taskmanager
     environment:
-      KAFKA_BROKER: kafka:9094
+      KAFKA_BROKER: kafka-1:9094,kafka-2:9094,kafka-3:9094
       KAFKA_INPUT_TOPIC: reddit-comments
       KAFKA_OUTPUT_TOPIC: reddit-comments-cleaned
       KAFKA_MALFORMED_TOPIC: reddit-comments-malformed

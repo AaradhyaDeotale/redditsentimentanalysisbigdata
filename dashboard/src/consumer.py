@@ -63,7 +63,9 @@ def _run_real_consumer() -> None:
     from confluent_kafka import Consumer  # lazy import - mock mode needs no broker
 
     conf = {
-        "bootstrap.servers": os.getenv("KAFKA_BROKER", "localhost:9092"),
+        "bootstrap.servers": os.getenv(
+            "KAFKA_BROKER", "localhost:9092,localhost:9095,localhost:9096"
+        ),
         "group.id": os.getenv("KAFKA_GROUP_ID", "dashboard-consumer"),
         "auto.offset.reset": os.getenv("KAFKA_AUTO_OFFSET_RESET", "earliest"),
     }

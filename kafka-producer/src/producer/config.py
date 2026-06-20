@@ -14,7 +14,7 @@ def get_config() -> dict:
     """
     required = {
         "ZST_FILE":     "Path to the RC_2019-04.zst dataset file",
-        "KAFKA_BROKER": "Kafka broker address, e.g. kafka:9092",
+        "KAFKA_BROKER": "Kafka bootstrap servers, e.g. localhost:9092,localhost:9095,localhost:9096",
         "KAFKA_TOPIC":  "Kafka topic to publish to, e.g. reddit-comments",
     }
 

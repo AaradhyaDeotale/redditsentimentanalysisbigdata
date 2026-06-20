@@ -71,7 +71,7 @@ REQUIRED_FIELDS = frozenset(
 def load_settings() -> AppSettings:
     return AppSettings(
         kafka=KafkaSettings(
-            broker=os.getenv("KAFKA_BROKER", "localhost:9092"),
+            broker=os.getenv("KAFKA_BROKER", "localhost:9092,localhost:9095,localhost:9096"),
             input_topic=os.getenv("KAFKA_INPUT_TOPIC", "reddit-comments"),
             output_topic=os.getenv("KAFKA_OUTPUT_TOPIC", "reddit-comments-cleaned"),
             malformed_topic=os.getenv("KAFKA_MALFORMED_TOPIC", "reddit-comments-malformed"),
