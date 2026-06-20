@@ -2,9 +2,9 @@
 
 Apache Flink (PyFlink) streaming pipeline for the university big-data project.
 
-**Reads** Reddit comments from Kafka (written by `../kafka-producer`) → **preprocesses** in real time (emoji-safe UTF-8) → **writes** cleaned records for future sentiment-model training.
+**Reads** Reddit comments from Kafka (written by `../kafka-producer`) → **preprocesses** in real time (emoji-safe UTF-8) → **scores sentiment** with the trained ML model from `../ml-model` → **writes** cleaned comments and per-keyword window aggregates for the dashboard.
 
-> **Out of scope for this folder:** Kafka producer code, training the final sentiment model.
+> **Out of scope for this folder:** Kafka producer code, offline model training (see `../ml-model`).
 
 ---
 
@@ -14,8 +14,9 @@ Apache Flink (PyFlink) streaming pipeline for the university big-data project.
 |------|-----------|-------|--------|
 | 1 | Kafka cluster (3 brokers) | - | `kafka-producer/docker/` |
 | 2 | Producer script | `reddit-comments` | `kafka-producer/` |
-| 3 | **This Flink job** | `reddit-comments` → `reddit-comments-cleaned` | `flink-streaming/` |
-| 4 | Future ML | `reddit-comments-cleaned` | (another teammate) |
+| 3 | **This Flink job** | `reddit-comments` → `reddit-comments-cleaned` + `sentiment-results` | `flink-streaming/` |
+| 4 | ML model (train + store) | model files at `MODEL_DIR` | `ml-model/` |
+| 5 | Dashboard | consumes `sentiment-results` | `dashboard/` |
 
 Docker is **split on purpose**:
 
@@ -40,17 +41,28 @@ flowchart LR
 
   subgraph flink [flink-streaming]
     SRC[Kafka Source]
-    PARSE[parse.py]
-    PRE[cleaner + tokenizer]
-    SENT[sentiment placeholder]
-    SRC --> PARSE --> PRE --> SENT
+    PARSE[parse + preprocess]
+    KW[keyword filter]
+    ML[sentiment ML scorer]
+    WM[event-time watermarks]
+  WIN[window aggregation]
+    SRC --> PARSE --> KW --> ML --> WM
+    WM --> WIN
+    WM --> TCLEAN[cleaned JSON]
   end
 
   subgraph egress [Kafka output]
     TOUT[(reddit-comments-cleaned)]
+    TRES[(sentiment-results)]
     TMAL[(reddit-comments-malformed)]
-    SENT --> TOUT
+    TCLEAN --> TOUT
+    WIN --> TRES
     PARSE --> TMAL
+  end
+
+  subgraph ml [ml-model]
+    STORE[(MODEL_DIR)]
+    STORE -.-> ML
   end
 
   TIN --> SRC
@@ -60,10 +72,12 @@ flowchart LR
 |-------|----------------|
 | **Kafka Source** | Reads UTF-8 JSON strings from `reddit-comments` |
 | **Parse** | Validates fields; bad records → `reddit-comments-malformed` |
-| **Preprocess** | Removes URLs/markdown; tokenizes; keeps emojis |
-| **Sentiment placeholder** | Adds `sentiment_*` fields (no real model yet) |
+| **Preprocess** | Removes URLs/markdown; detects language; tokenizes; keeps emojis |
+| **Keyword filter** | Tags each record with `matched_keywords` (e.g. `apple`, `android`) |
+| **Sentiment ML** | Scores `tokens` via `SentimentMLFunction` / `ModelScorer` from `ml-model` |
 | **Event time** | Watermarks from `created_utc` |
-| **Kafka Sink** | Writes JSON to `reddit-comments-cleaned` |
+| **Window aggregation** | Per-keyword tumbling event-time windows → `sentiment-results` |
+| **Kafka Sinks** | Cleaned comments → `reddit-comments-cleaned`; aggregates → `sentiment-results` |
 
 Flink connects to Kafka using **JAR connectors** baked into `docker/Dockerfile`:
 
@@ -71,24 +85,47 @@ Flink connects to Kafka using **JAR connectors** baked into `docker/Dockerfile`:
 - `kafka-clients-3.7.0.jar`
 - `flink-connector-base-1.18.1.jar`
 
-### Output record (what downstream ML should consume)
+### Cleaned comment (`reddit-comments-cleaned`)
+
+Each scored, preprocessed comment written for downstream use or inspection:
 
 ```json
 {
   "id": "abc123",
+  "author": "some_user",
   "created_utc": 1554076812,
   "subreddit": "technology",
+  "language": "en",
   "original_body": "Check this out 🔥 https://example.com",
   "cleaned_body": "Check this out 🔥",
   "tokens": ["Check", "this", "out", "🔥"],
   "score": 42,
   "controversiality": 0,
-  "sentiment_label": null,
-  "sentiment_score": null,
-  "sentiment_model": null,
-  "sentiment_status": "pending_ml_integration"
+  "matched_keywords": ["apple"],
+  "sentiment_label": "positive",
+  "sentiment_score": 0.87,
+  "sentiment_model": "v20240620_120000",
+  "sentiment_status": "scored"
 }
 ```
+
+`sentiment_status` may also be `skipped_too_short` or `no_model_available` when the model is missing or tokens are below `MIN_TOKENS`.
+
+### Dashboard aggregate (`sentiment-results`)
+
+Per-keyword, per-window records consumed by `../dashboard`:
+
+```json
+{
+  "keyword": "apple",
+  "window_start": 1554076800,
+  "window_end": 1554080400,
+  "positive_ratio": 0.6667,
+  "comment_count": 3
+}
+```
+
+Windows are **tumbling event-time** buckets (default 3600 s) keyed by keyword. Only comments with a `sentiment_label` and at least one `matched_keywords` entry contribute to aggregation.
 
 ---
 
@@ -109,14 +146,18 @@ flink-streaming/
 │   ├── main.py                  # Entry: load config → build pipeline → execute job
 │   ├── logging_setup.py         # Log format and level
 │   ├── job/
-│   │   └── reddit_stream_job.py # Wires operators: source → parse → sentiment → sink
+│   │   └── reddit_stream_job.py # Wires full pipeline incl. ML scorer + results sink
 │   ├── sources/
 │   │   └── kafka_io.py          # KafkaSource / KafkaSink builders
 │   ├── operators/
 │   │   ├── parse.py             # JSON parse, validation, cleaning, side output
-│   │   └── sentiment_placeholder.py  # Hook for future ML model
+│   │   ├── keyword_filter.py    # Tags matched_keywords from KEYWORD_FILTER
+│   │   ├── sentiment_ml.py      # Real-time ML scoring (ModelScorer from ml-model)
+│   │   ├── sentiment_window.py  # Keyword fan-out + tumbling window aggregation
+│   │   └── sentiment_placeholder.py  # NullSentimentScorer interface (used by tests)
 │   └── preprocessing/
 │       ├── cleaner.py           # URL/markdown removal (emoji-safe)
+│       ├── language_detector.py # langdetect per comment
 │       └── tokenizer.py         # Tokenization, optional stopwords/stem
 ├── scripts/
 │   └── validate_output.py       # Read cleaned topic and check schema
@@ -207,6 +248,16 @@ python scripts/validate_output.py --broker localhost:9092,localhost:9095,localho
 docker exec kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic reddit-comments-malformed --from-beginning --max-messages 3
 ```
 
+### Step 5 - See sentiment-results (dashboard input)
+
+After event-time windows close (default 1 h windows; use test data with recent timestamps or lower `WINDOW_SIZE_SEC` for quicker results):
+
+```powershell
+docker exec kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic sentiment-results --from-beginning --max-messages 5
+```
+
+Records appear only when comments match a `KEYWORD_FILTER` term **and** receive a `sentiment_label` from the ML scorer.
+
 ---
 
 ## Restart / rebuild Flink only
@@ -250,8 +301,13 @@ python src/flink_job/main.py
 |----------|------------------|-------------|
 | `KAFKA_BROKER` | `kafka-1:9094,kafka-2:9094,kafka-3:9094` in compose | Host scripts: `localhost:9092,localhost:9095,localhost:9096` |
 | `KAFKA_INPUT_TOPIC` | `reddit-comments` | Must match producer topic |
-| `KAFKA_OUTPUT_TOPIC` | `reddit-comments-cleaned` | Preprocessed output |
+| `KAFKA_OUTPUT_TOPIC` | `reddit-comments-cleaned` | Preprocessed + scored comments |
+| `KAFKA_RESULTS_TOPIC` | `sentiment-results` | Per-keyword window aggregates for dashboard |
 | `KAFKA_MALFORMED_TOPIC` | `reddit-comments-malformed` | Parse failures |
+| `KEYWORD_FILTER` | `apple,android` in compose | Comma-separated keywords to track |
+| `WINDOW_SIZE_SEC` | `3600` | Tumbling event-time window size (seconds) |
+| `MODEL_DIR` | `/models` in Docker image | Trained model store (mount or bake in) |
+| `MIN_TOKENS` | `2` | Skip scoring when fewer tokens |
 | `KAFKA_STARTING_OFFSET` | `earliest` in compose | `earliest` or `latest` |
 | `FLINK_PARALLELISM` | `2` | Operator parallelism |
 | `FLINK_CHECKPOINT_INTERVAL_MS` | `60000` | Checkpoint interval |
@@ -266,13 +322,19 @@ python src/flink_job/main.py
 
 ---
 
-## Future sentiment ML integration
+## ML scorer and sentiment-results sink
 
-Edit `src/flink_job/operators/sentiment_placeholder.py`:
+The Flink image bundles `ml_model` from `../ml-model` (see `docker/Dockerfile`). At runtime:
 
-- Replace `NullSentimentScorer` with your model class
-- Implement `score(cleaned_body, tokens) -> dict`
-- Load model in `open()` if needed
+1. **`SentimentMLFunction`** (`operators/sentiment_ml.py`) loads `ModelScorer` from `MODEL_DIR`.
+2. Each comment's `tokens` are classified; four fields are added: `sentiment_label`, `sentiment_score`, `sentiment_model`, `sentiment_status`.
+3. If no model exists yet, records still flow through with `sentiment_status: no_model_available` — the scorer hot-reloads when a model appears.
+4. **`KeywordFanoutFunction`** + **`SentimentWindowFunction`** aggregate scored comments per keyword over tumbling event-time windows.
+5. Results are written to **`sentiment-results`** via `kafka-sentiment-results-sink`.
+
+To train a model before running the full pipeline, see `../ml-model/README.md`. Mount trained weights into the Flink container at `MODEL_DIR` (default `/models`) when rebuilding or via a compose volume.
+
+The placeholder module (`sentiment_placeholder.py`) remains as the `SentimentScorer` interface and for unit tests without a loaded model.
 
 ---
 
@@ -295,6 +357,8 @@ docker compose -f docker/docker-compose.yml down
 | `flink-reddit-job` shows `-m: command not found` | Rebuild: fixed in current `docker-compose.yml` (single-line command) |
 | `No module named flink_job` | Rebuild image (`PYTHONPATH` fix in Dockerfile) |
 | No messages on cleaned topic | Producer ran before job? Re-run producer; check Flink UI for FAILED job |
+| No messages on `sentiment-results` | Comments must match `KEYWORD_FILTER` and have `sentiment_label`; windows are event-time — wait for watermark or lower `WINDOW_SIZE_SEC` |
+| `sentiment_status: no_model_available` | Train model in `ml-model` and mount/copy to `MODEL_DIR`; scorer picks it up on hot-reload |
 | Flink cannot reach Kafka | Flink must use `kafka-1:9094,kafka-2:9094,kafka-3:9094`, not `localhost:9092` |
 | Container name already in use | `docker rm -f flink-jobmanager flink-taskmanager flink-reddit-job` then `up` again |
 | Emojis broken | Should not happen; JSON uses `ensure_ascii=False` |
