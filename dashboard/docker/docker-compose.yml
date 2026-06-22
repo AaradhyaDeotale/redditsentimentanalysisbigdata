@@ -1,0 +1,33 @@
+# Dashboard (P5 P6) - joins the shared bd_streaming network so it can reach the
+# Kafka brokers and the Flink JobManager by service name.
+#
+# Start order: Kafka (creates the network) -> Flink -> this.
+#   docker compose -f docker/docker-compose.yml up --build
+
+services:
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: sentiment-dashboard:latest
+    container_name: sentiment-dashboard
+    ports:
+      - "8000:8000"
+    environment:
+      # in-network addresses (see kafka-producer / flink-streaming compose files)
+      KAFKA_BROKER: kafka-1:9094,kafka-2:9094,kafka-3:9094
+      KAFKA_TOPIC: sentiment-results
+      KAFKA_GROUP_ID: dashboard-consumer
+      KAFKA_AUTO_OFFSET_RESET: earliest
+      KAFKA_COMMENTS_TOPIC: reddit-comments-cleaned
+      KAFKA_COMMENTS_GROUP_ID: dashboard-comments
+      KAFKA_COMMENTS_OFFSET_RESET: latest
+      FLINK_API_URL: http://jobmanager:8081
+      USE_MOCK_DATA: "false"
+    networks:
+      - bd_streaming
+    restart: unless-stopped
+
+networks:
+  bd_streaming:
+    external: true
