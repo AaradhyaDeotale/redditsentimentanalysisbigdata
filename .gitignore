@@ -20,3 +20,6 @@ __pycache__/
 models/
 *.pkl
 *.joblib
+
+# Git worktrees
+.worktrees/

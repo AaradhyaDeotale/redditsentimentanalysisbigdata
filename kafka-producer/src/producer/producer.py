@@ -159,7 +159,14 @@ def replay(filepath: str, broker: str, topic: str, speed: float, limit: int | No
         for rec in group:
             key   = rec["id"].encode("utf-8")
             value = json.dumps(rec, ensure_ascii=False).encode("utf-8")
-            producer.produce(topic, key=key, value=value, callback=delivery_report)
+            # Stamp the Kafka record timestamp with the comment's event time
+            # (created_utc, ms) so Flink windows on 2019 event-time, not on
+            # today's ingestion time.
+            producer.produce(
+                topic, key=key, value=value,
+                timestamp=int(rec["created_utc"]) * 1000,
+                callback=delivery_report,
+            )
             sent += 1
 
         producer.poll(0)   # trigger delivery callbacks without blocking
