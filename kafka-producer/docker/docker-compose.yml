@@ -20,6 +20,10 @@ x-kafka-env: &kafka-env
   KAFKA_DEFAULT_REPLICATION_FACTOR: 3
   KAFKA_MIN_INSYNC_REPLICAS: 2
   KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+  # Replaying historical (2019) Reddit comments: stamp records with their
+  # created_utc event-time. Disable time-based retention so these "old"
+  # records are not immediately purged by the default 7-day policy.
+  KAFKA_LOG_RETENTION_MS: "-1"
 
 services:
   kafka-1:
