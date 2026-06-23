@@ -14,6 +14,7 @@ __pycache__/
 
 # --- ML artifacts: never commit trained models or datasets (too large) ---
 models/
+data/work/
 data/*.jsonl
 data/*.csv
 *.pkl
