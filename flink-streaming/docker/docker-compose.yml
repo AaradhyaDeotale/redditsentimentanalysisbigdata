@@ -32,6 +32,10 @@ services:
       PREPROCESS_STEM: "0"
       OUTPUT_SINK: kafka
       LOG_LEVEL: INFO
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      CACHE_TTL_SEC: "86400"
+      BATCH_MAX_SIZE: "${BATCH_MAX_SIZE:-256}"
+      BATCH_MAX_MS: "${BATCH_MAX_MS:-200}"
     volumes:
       - flink-checkpoints:/opt/flink/checkpoints
       - ../../ml-model/models:/models
@@ -71,6 +75,10 @@ services:
       PREPROCESS_STEM: "0"
       OUTPUT_SINK: kafka
       LOG_LEVEL: INFO
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      CACHE_TTL_SEC: "86400"
+      BATCH_MAX_SIZE: "${BATCH_MAX_SIZE:-256}"
+      BATCH_MAX_MS: "${BATCH_MAX_MS:-200}"
     volumes:
       - flink-checkpoints:/opt/flink/checkpoints
       - ../../ml-model/models:/models
@@ -110,12 +118,24 @@ services:
       PREPROCESS_STEM: "0"
       OUTPUT_SINK: kafka
       LOG_LEVEL: INFO
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      CACHE_TTL_SEC: "86400"
+      BATCH_MAX_SIZE: "${BATCH_MAX_SIZE:-256}"
+      BATCH_MAX_MS: "${BATCH_MAX_MS:-200}"
     volumes:
       - ../output:/opt/flink/output
     command:
       - bash
       - -c
       - sleep 25 && /opt/flink/bin/flink run -m jobmanager:8081 -py /opt/flink/usrlib/src/flink_job/main.py -d
+    networks:
+      - bd_streaming
+
+  redis:
+    image: redis:7-alpine
+    container_name: bd-redis
+    ports:
+      - "6379:6379"
     networks:
       - bd_streaming
 
