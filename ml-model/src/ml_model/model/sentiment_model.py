@@ -58,3 +58,13 @@ class SentimentModel:
             return []
         features = self.feature_extractor.transform([list(t) for t in corpus])
         return [str(p) for p in self.classifier.predict(features)]
+
+    def predict_batch_scored(self, corpus: Sequence[Sequence[str]]) -> list[Prediction]:
+        """Predict (label, P(positive)) for many comments in one vectorized call."""
+        if len(corpus) == 0:
+            return []
+        features = self.feature_extractor.transform([list(t) for t in corpus])
+        labels = self.classifier.predict(features)
+        scores = self.classifier.predict_proba(features)[:, self._pos_index]
+        return [Prediction(label=str(label), score=float(score))
+                for label, score in zip(labels, scores)]
