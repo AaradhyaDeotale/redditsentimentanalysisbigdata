@@ -172,7 +172,10 @@ def control_status():
 def control_producer_start(body: dict = Body(default={})):
     _require_control()
     try:
-        return control.producer.start(body.get("speed", 2), body.get("limit", 60000))
+        # skip omitted -> auto-advance from the cursor; skip:0 -> replay from start
+        return control.producer.start(
+            body.get("speed", 2), body.get("limit", 60000), body.get("skip")
+        )
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -183,13 +186,22 @@ def control_producer_stop():
     return control.producer.stop()
 
 
+@app.post("/api/control/producer/reset-offset")
+def control_producer_reset_offset():
+    _require_control()
+    control.producer.reset_offset()
+    return control.producer.status()
+
+
 @app.post("/api/control/pipeline/reset")
 def control_pipeline_reset(body: dict = Body(default={})):
     _require_control()
     try:
-        return control.pipeline.reset(
+        result = control.pipeline.reset(
             body.get("parallelism", 2), body.get("window_sec", 60)
         )
+        control.producer.reset_offset()  # fresh topics -> next replay starts at 0
+        return result
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=409, detail=str(e))
 

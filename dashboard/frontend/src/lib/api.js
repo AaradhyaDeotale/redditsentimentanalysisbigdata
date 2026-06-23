@@ -44,8 +44,11 @@ export const getFlinkJobs = () => getJSON("/api/flink/jobs");
 
 // Manual-mode controls (local dev only; gated by CONTROL_ENABLED on the server).
 export const getControlStatus = () => getJSON("/api/control/status");
-export const startProducer = (speed, limit) =>
-  postJSON("/api/control/producer/start", { speed, limit });
+// skip omitted -> server auto-advances; pass skip:0 to replay from the start.
+export const startProducer = (speed, limit, skip) =>
+  postJSON("/api/control/producer/start", { speed, limit, skip });
 export const stopProducer = () => postJSON("/api/control/producer/stop");
+export const resetOffset = () =>
+  postJSON("/api/control/producer/reset-offset");
 export const resetPipeline = (parallelism, window_sec) =>
   postJSON("/api/control/pipeline/reset", { parallelism, window_sec });
