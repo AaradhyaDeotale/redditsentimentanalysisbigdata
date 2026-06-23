@@ -24,11 +24,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import flink_proxy, kafka_admin
+from . import control, flink_proxy, kafka_admin
 from .comment_store import comment_buffer
 from .consumer import data_mode, set_sinks, start_background_consumer
 from .store import store
@@ -149,6 +149,49 @@ async def flink_jobs():
 @app.get("/api/flink/jobs/{job_id}")
 async def flink_job(job_id: str):
     return await flink_proxy.job_detail(job_id)
+
+
+def _require_control():
+    if not control.CONTROL_ENABLED:
+        raise HTTPException(
+            status_code=403, detail="controls disabled (set CONTROL_ENABLED=true)"
+        )
+
+
+@app.get("/api/control/status")
+def control_status():
+    """Manual-mode status (always reachable so the UI can show enabled/disabled)."""
+    return {
+        "enabled": control.CONTROL_ENABLED,
+        "producer": control.producer.status(),
+        "reset": control.pipeline.status(),
+    }
+
+
+@app.post("/api/control/producer/start")
+def control_producer_start(body: dict = Body(default={})):
+    _require_control()
+    try:
+        return control.producer.start(body.get("speed", 2), body.get("limit", 60000))
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/api/control/producer/stop")
+def control_producer_stop():
+    _require_control()
+    return control.producer.stop()
+
+
+@app.post("/api/control/pipeline/reset")
+def control_pipeline_reset(body: dict = Body(default={})):
+    _require_control()
+    try:
+        return control.pipeline.reset(
+            body.get("parallelism", 2), body.get("window_sec", 60)
+        )
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @app.websocket("/ws")

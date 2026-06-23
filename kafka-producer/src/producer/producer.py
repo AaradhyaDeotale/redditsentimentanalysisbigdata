@@ -146,6 +146,7 @@ def replay(filepath: str, broker: str, topic: str, speed: float, limit: int | No
 
     sorted_timestamps = sorted(buckets.keys())
     sent = 0
+    last_logged = 0
     prev_ts = None
 
     for ts in sorted_timestamps:
@@ -171,8 +172,11 @@ def replay(filepath: str, broker: str, topic: str, speed: float, limit: int | No
 
         producer.poll(0)   # trigger delivery callbacks without blocking
 
-        if sent % 10_000 == 0:
+        # Log on crossing a threshold (sent jumps by a whole timestamp group,
+        # so an exact `% N == 0` check would skip right over the milestones).
+        if sent - last_logged >= 2000:
             log.info("Sent %d / %d records  (ts=%d)", sent, total, ts)
+            last_logged = sent
 
         prev_ts = ts
 

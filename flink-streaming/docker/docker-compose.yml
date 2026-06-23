@@ -20,9 +20,9 @@ services:
       KAFKA_STARTING_OFFSET: earliest
       KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
       KEYWORD_FILTER: apple,android
-      WINDOW_SIZE_SEC: "60"
+      WINDOW_SIZE_SEC: "${WINDOW_SIZE_SEC:-60}"
       FLINK_JOB_NAME: reddit-comment-preprocessor
-      FLINK_PARALLELISM: "2"
+      FLINK_PARALLELISM: "${FLINK_PARALLELISM:-2}"
       FLINK_CHECKPOINT_INTERVAL_MS: "60000"
       WATERMARK_MAX_OUT_OF_ORDER_SEC: "5"
       PREPROCESS_REMOVE_URLS: "1"
@@ -59,9 +59,9 @@ services:
       KAFKA_STARTING_OFFSET: earliest
       KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
       KEYWORD_FILTER: apple,android
-      WINDOW_SIZE_SEC: "60"
+      WINDOW_SIZE_SEC: "${WINDOW_SIZE_SEC:-60}"
       FLINK_JOB_NAME: reddit-comment-preprocessor
-      FLINK_PARALLELISM: "2"
+      FLINK_PARALLELISM: "${FLINK_PARALLELISM:-2}"
       FLINK_CHECKPOINT_INTERVAL_MS: "60000"
       WATERMARK_MAX_OUT_OF_ORDER_SEC: "5"
       PREPROCESS_REMOVE_URLS: "1"
@@ -98,9 +98,9 @@ services:
       KAFKA_STARTING_OFFSET: earliest
       KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
       KEYWORD_FILTER: apple,android
-      WINDOW_SIZE_SEC: "60"
+      WINDOW_SIZE_SEC: "${WINDOW_SIZE_SEC:-60}"
       FLINK_JOB_NAME: reddit-comment-preprocessor
-      FLINK_PARALLELISM: "2"
+      FLINK_PARALLELISM: "${FLINK_PARALLELISM:-2}"
       FLINK_CHECKPOINT_INTERVAL_MS: "60000"
       WATERMARK_MAX_OUT_OF_ORDER_SEC: "5"
       PREPROCESS_REMOVE_URLS: "1"

@@ -4,6 +4,7 @@ import {
   getKafkaOverview,
   getKafkaTopics,
 } from "../lib/api.js";
+import ControlPanel from "../components/ControlPanel.jsx";
 
 const DOT = {
   ok: "bg-pos",
@@ -116,6 +117,11 @@ export default function OverviewTab({ meta }) {
         ))}
       </div>
       {!data && <p className="text-xs text-muted">polling…</p>}
+
+      <div className="pt-2">
+        <h2 className="mb-3 text-sm font-semibold text-muted">Manual controls</h2>
+        <ControlPanel />
+      </div>
     </div>
   );
 }
