@@ -2,6 +2,7 @@ import { useState } from "react";
 import { usePoll } from "../lib/usePoll.js";
 import {
   getControlStatus,
+  resetOffset,
   resetPipeline,
   startProducer,
   stopProducer,
@@ -117,6 +118,24 @@ export default function ControlPanel() {
             className="rounded-lg border border-edge px-4 py-2 text-sm font-medium text-text hover:border-neg hover:text-neg disabled:opacity-40"
           >
             Stop
+          </button>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted">
+          <span>
+            next slice:{" "}
+            <span className="text-text">
+              records {(prod.offset ?? 0).toLocaleString()}–
+              {((prod.offset ?? 0) + Number(limit || 0)).toLocaleString()}
+            </span>{" "}
+            · each Start streams the next slice
+          </span>
+          <button
+            onClick={() => call(resetOffset)}
+            disabled={prod.running || busy}
+            className="rounded border border-edge px-2 py-1 hover:text-text disabled:opacity-40"
+          >
+            ↺ reset offset
           </button>
         </div>
 

@@ -113,15 +113,18 @@ def stream_records(filepath: str):
 
 
 # ── Main replay loop ──────────────────────────────────────────────────────────
-def replay(filepath: str, broker: str, topic: str, speed: float, limit: int | None = None):
+def replay(filepath: str, broker: str, topic: str, speed: float,
+           limit: int | None = None, skip: int = 0):
     """
     Group records by timestamp and send them to Kafka.
     Sleeps between timestamp groups to simulate real-time replay.
     The sleep is scaled by 1/speed (speed=2 → twice as fast).
 
-    If `limit` is set, the file read stops after that many in-window records.
-    This bounds memory + runtime when replaying a subset of the full 14 GB
-    RC_2019-04.zst (the assignment only requires part of the data).
+    `skip` drops the first N in-window records and `limit` then caps how many
+    are replayed - together they select the slice [skip, skip+limit) of the
+    chronologically-ordered comments. Successive runs can advance `skip` to
+    stream different (and time-advancing) subsets of the full RC_2019-04.zst,
+    instead of always replaying the same earliest records.
     """
     producer = build_producer(broker)
     log.info("Connected to Kafka broker: %s", broker)
@@ -132,8 +135,14 @@ def replay(filepath: str, broker: str, topic: str, speed: float, limit: int | No
     # Group by timestamp
     buckets: dict[int, list[dict]] = defaultdict(list)
     total = 0
+    skipped = 0
+    if skip:
+        log.info("Skipping first %d in-window records …", skip)
     log.info("Loading and filtering records …")
     for rec in stream_records(filepath):
+        if skipped < skip:
+            skipped += 1
+            continue
         buckets[rec["created_utc"]].append(rec)
         total += 1
         if total % 50_000 == 0:
@@ -218,6 +227,14 @@ def parse_args():
              "whole Apr 1–17 window (tens of millions of records) is loaded into "
              "memory and will OOM. e.g. --limit 50000 for a quick real subset.",
     )
+    p.add_argument(
+        "--skip", "-k",
+        type=int,
+        default=int(os.getenv("SKIP_RECORDS", "0")),
+        help="Drop the first N in-window records before replaying (default: 0). "
+             "Combine with --limit to replay a later slice, e.g. "
+             "--skip 60000 --limit 60000 streams records 60k-120k.",
+    )
     return p.parse_args()
 
 
@@ -229,4 +246,5 @@ if __name__ == "__main__":
         topic=args.topic,
         speed=args.speed,
         limit=args.limit,
+        skip=args.skip,
     )

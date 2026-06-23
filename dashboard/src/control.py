@@ -60,13 +60,18 @@ class ProducerController:
         self._limit: int | None = None
         self._loading = False
         self._last_log = ""
+        self._skip = 0      # records skipped by the current/last run
+        self._cursor = 0    # where the NEXT auto-advancing run will start
 
-    def start(self, speed, limit) -> dict:
+    def start(self, speed, limit, skip=None) -> dict:
         with self._lock:
             if self._proc and self._proc.poll() is None:
                 raise RuntimeError("producer already running")
             speed = _clamp(float(speed), 0.1, 1000.0)
             limit = int(_clamp(int(limit), 1000, 5_000_000))
+            # auto-advance: each run starts where the last left off unless an
+            # explicit skip is given (e.g. skip=0 to replay from the start).
+            skip_val = self._cursor if skip is None else int(_clamp(int(skip), 0, 50_000_000))
             cmd = [
                 str(PRODUCER_PYTHON), str(PRODUCER_SCRIPT),
                 "--file", str(ZST_FILE),
@@ -74,9 +79,12 @@ class ProducerController:
                 "--topic", PRODUCER_TOPIC,
                 "--speed", str(speed),
                 "--limit", str(limit),
+                "--skip", str(skip_val),
             ]
             self._sent, self._total = 0, 0
             self._speed, self._limit = speed, limit
+            self._skip = skip_val
+            self._cursor = skip_val + limit  # advance for the next run
             self._loading, self._last_log = True, "starting…"
             self._proc = subprocess.Popen(
                 cmd, cwd=str(PRODUCER_CWD),
@@ -116,6 +124,10 @@ class ProducerController:
                     self._proc.kill()
         return self.status()
 
+    def reset_offset(self) -> None:
+        """Rewind the auto-advance cursor so the next run starts from the top."""
+        self._cursor = 0
+
     def status(self) -> dict:
         running = self._proc is not None and self._proc.poll() is None
         return {
@@ -125,6 +137,8 @@ class ProducerController:
             "total": self._total,
             "speed": self._speed,
             "limit": self._limit,
+            "skip": self._skip,
+            "offset": self._cursor,
             "last_log": self._last_log,
         }
 
