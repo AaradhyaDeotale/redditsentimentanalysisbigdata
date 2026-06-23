@@ -17,6 +17,9 @@ pandas==2.2.2
 # --- Kafka I/O: consume reddit-comments-cleaned, publish sentiment-results ---
 confluent-kafka==2.3.0
 
+# --- Model-reload pub/sub signal (retrain -> Flink scorer) ---
+redis==5.0.8
+
 # --- Config ---
 python-dotenv==1.0.1
 

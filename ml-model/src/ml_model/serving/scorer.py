@@ -71,6 +71,31 @@ class ModelScorer:
         prediction = self._model.predict_one(toks)
         return self._result(prediction.label, prediction.score, STATUS_SCORED)
 
+    def score_batch(self, token_lists: Sequence[Sequence[str]]) -> list[dict[str, Any]]:
+        """Score many comments at once. Eligible comments (>= min_tokens) are
+        classified in a single vectorized call; short ones are skipped without
+        touching the model."""
+        if self._model is None:
+            try:
+                self.load()
+            except FileNotFoundError:
+                return [self._result(None, None, STATUS_NO_MODEL) for _ in token_lists]
+
+        results: list[dict[str, Any] | None] = [None] * len(token_lists)
+        eligible_idx: list[int] = []
+        eligible_toks: list[list[str]] = []
+        for i, tokens in enumerate(token_lists):
+            toks = [str(t) for t in (tokens or []) if str(t).strip()]
+            if len(toks) < self._min_tokens:
+                results[i] = self._result(None, None, STATUS_SKIPPED)
+            else:
+                eligible_idx.append(i)
+                eligible_toks.append(toks)
+
+        for i, prediction in zip(eligible_idx, self._model.predict_batch_scored(eligible_toks)):
+            results[i] = self._result(prediction.label, prediction.score, STATUS_SCORED)
+        return results
+
     def _result(self, label, score, status) -> dict[str, Any]:
         return {
             "sentiment_label": label,

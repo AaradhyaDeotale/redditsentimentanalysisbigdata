@@ -9,11 +9,15 @@ maybe_reload() then hot-swaps to it.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from ml_model.data.dataset import load_labeled_dataset
 from ml_model.model.model_store import ModelStore
 from ml_model.model.trainer import FEATURE_TFIDF, train_model
+
+RELOAD_CHANNEL = "reddit:model-reload"
+RELOAD_EVENT = "model_ready"
 
 
 class RetrainTrigger:
@@ -53,6 +57,8 @@ def run_retrain_cycle(
     random_state: int = 42,
     min_tokens: int = 1,
     version: str | None = None,
+    publisher=None,
+    channel: str = RELOAD_CHANNEL,
     **feature_kwargs,
 ) -> RetrainResult:
     dataset = load_labeled_dataset(labeled_path, min_tokens=min_tokens)
@@ -64,6 +70,8 @@ def run_retrain_cycle(
         **feature_kwargs,
     )
     saved = ModelStore(model_dir).save(result.model, version=version)
+    if publisher is not None:
+        publisher(channel, json.dumps({"event": RELOAD_EVENT, "version": saved}))
     return RetrainResult(
         version=saved,
         accuracy=result.report.accuracy,
