@@ -66,6 +66,10 @@ class ModelScorer:
             except FileNotFoundError:
                 return self._result(None, None, STATUS_NO_MODEL)
         toks = [str(t) for t in (tokens or []) if str(t).strip()]
+        if len(toks) < self._min_tokens:
+            return self._result(None, None, STATUS_SKIPPED)
+        prediction = self._model.predict_one(toks)
+        return self._result(prediction.label, prediction.score, STATUS_SCORED)
 
     def _result(self, label, score, status) -> dict[str, Any]:
         return {

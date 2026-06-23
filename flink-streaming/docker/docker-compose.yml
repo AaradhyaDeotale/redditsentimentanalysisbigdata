@@ -3,6 +3,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      additional_contexts:
+        mlmodel_src: ../../ml-model
       platforms:
         - linux/arm64
     image: flink-reddit-jobmanager:1.18
@@ -18,8 +20,9 @@ services:
       KAFKA_STARTING_OFFSET: earliest
       KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
       KEYWORD_FILTER: apple,android
+      WINDOW_SIZE_SEC: "${WINDOW_SIZE_SEC:-60}"
       FLINK_JOB_NAME: reddit-comment-preprocessor
-      FLINK_PARALLELISM: "2"
+      FLINK_PARALLELISM: "${FLINK_PARALLELISM:-2}"
       FLINK_CHECKPOINT_INTERVAL_MS: "60000"
       WATERMARK_MAX_OUT_OF_ORDER_SEC: "5"
       PREPROCESS_REMOVE_URLS: "1"
@@ -31,6 +34,7 @@ services:
       LOG_LEVEL: INFO
     volumes:
       - flink-checkpoints:/opt/flink/checkpoints
+      - ../../ml-model/models:/models
     networks:
       - bd_streaming
 
@@ -38,6 +42,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      additional_contexts:
+        mlmodel_src: ../../ml-model
       platforms:
         - linux/arm64
     image: flink-reddit-taskmanager:1.18
@@ -53,8 +59,9 @@ services:
       KAFKA_STARTING_OFFSET: earliest
       KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
       KEYWORD_FILTER: apple,android
+      WINDOW_SIZE_SEC: "${WINDOW_SIZE_SEC:-60}"
       FLINK_JOB_NAME: reddit-comment-preprocessor
-      FLINK_PARALLELISM: "2"
+      FLINK_PARALLELISM: "${FLINK_PARALLELISM:-2}"
       FLINK_CHECKPOINT_INTERVAL_MS: "60000"
       WATERMARK_MAX_OUT_OF_ORDER_SEC: "5"
       PREPROCESS_REMOVE_URLS: "1"
@@ -66,6 +73,7 @@ services:
       LOG_LEVEL: INFO
     volumes:
       - flink-checkpoints:/opt/flink/checkpoints
+      - ../../ml-model/models:/models
     networks:
       - bd_streaming
 
@@ -73,6 +81,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      additional_contexts:
+        mlmodel_src: ../../ml-model
       platforms:
         - linux/arm64
     image: flink-reddit-job:1.18
@@ -88,8 +98,9 @@ services:
       KAFKA_STARTING_OFFSET: earliest
       KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
       KEYWORD_FILTER: apple,android
+      WINDOW_SIZE_SEC: "${WINDOW_SIZE_SEC:-60}"
       FLINK_JOB_NAME: reddit-comment-preprocessor
-      FLINK_PARALLELISM: "2"
+      FLINK_PARALLELISM: "${FLINK_PARALLELISM:-2}"
       FLINK_CHECKPOINT_INTERVAL_MS: "60000"
       WATERMARK_MAX_OUT_OF_ORDER_SEC: "5"
       PREPROCESS_REMOVE_URLS: "1"

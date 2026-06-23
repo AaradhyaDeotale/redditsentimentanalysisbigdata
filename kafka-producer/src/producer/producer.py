@@ -113,11 +113,15 @@ def stream_records(filepath: str):
 
 
 # ── Main replay loop ──────────────────────────────────────────────────────────
-def replay(filepath: str, broker: str, topic: str, speed: float):
+def replay(filepath: str, broker: str, topic: str, speed: float, limit: int | None = None):
     """
     Group records by timestamp and send them to Kafka.
     Sleeps between timestamp groups to simulate real-time replay.
     The sleep is scaled by 1/speed (speed=2 → twice as fast).
+
+    If `limit` is set, the file read stops after that many in-window records.
+    This bounds memory + runtime when replaying a subset of the full 14 GB
+    RC_2019-04.zst (the assignment only requires part of the data).
     """
     producer = build_producer(broker)
     log.info("Connected to Kafka broker: %s", broker)
@@ -134,11 +138,15 @@ def replay(filepath: str, broker: str, topic: str, speed: float):
         total += 1
         if total % 50_000 == 0:
             log.info("  … %d records loaded so far", total)
+        if limit is not None and total >= limit:
+            log.info("Reached --limit of %d records; stopping file read early.", limit)
+            break
 
     log.info("Total records in window: %d across %d unique timestamps", total, len(buckets))
 
     sorted_timestamps = sorted(buckets.keys())
     sent = 0
+    last_logged = 0
     prev_ts = None
 
     for ts in sorted_timestamps:
@@ -152,13 +160,23 @@ def replay(filepath: str, broker: str, topic: str, speed: float):
         for rec in group:
             key   = rec["id"].encode("utf-8")
             value = json.dumps(rec, ensure_ascii=False).encode("utf-8")
-            producer.produce(topic, key=key, value=value, callback=delivery_report)
+            # Stamp the Kafka record timestamp with the comment's event time
+            # (created_utc, ms) so Flink windows on 2019 event-time, not on
+            # today's ingestion time.
+            producer.produce(
+                topic, key=key, value=value,
+                timestamp=int(rec["created_utc"]) * 1000,
+                callback=delivery_report,
+            )
             sent += 1
 
         producer.poll(0)   # trigger delivery callbacks without blocking
 
-        if sent % 10_000 == 0:
+        # Log on crossing a threshold (sent jumps by a whole timestamp group,
+        # so an exact `% N == 0` check would skip right over the milestones).
+        if sent - last_logged >= 2000:
             log.info("Sent %d / %d records  (ts=%d)", sent, total, ts)
+            last_logged = sent
 
         prev_ts = ts
 
@@ -191,6 +209,15 @@ def parse_args():
         help="Replay speed multiplier (default: env REPLAY_SPEED or 1.0). "
              "Use 10 for 10x faster, 0.5 for half speed.",
     )
+    p.add_argument(
+        "--limit", "-n",
+        type=int,
+        default=(int(os.getenv("MAX_RECORDS")) if os.getenv("MAX_RECORDS") else None),
+        help="Max in-window records to replay (default: unlimited). "
+             "STRONGLY recommended for the full RC_2019-04.zst: without it the "
+             "whole Apr 1–17 window (tens of millions of records) is loaded into "
+             "memory and will OOM. e.g. --limit 50000 for a quick real subset.",
+    )
     return p.parse_args()
 
 
@@ -201,4 +228,5 @@ if __name__ == "__main__":
         broker=args.broker,
         topic=args.topic,
         speed=args.speed,
+        limit=args.limit,
     )

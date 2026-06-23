@@ -42,12 +42,16 @@ log = logging.getLogger("flink_job.pipeline")
 
 
 class CreatedUtcAssigner(TimestampAssigner):
-    """Event-time from Reddit created_utc (seconds to milliseconds)."""
+    """Event-time from Reddit created_utc (seconds to milliseconds).
+
+    Note: the producer also stamps the Kafka record timestamp with created_utc,
+    so event-time is correct even if this assigner is not invoked.
+    """
 
     def extract_timestamp(self, value, record_timestamp) -> int:
         if isinstance(value, dict) and "created_utc" in value:
             return int(value["created_utc"]) * 1000
-        return 0
+        return record_timestamp
 
 
 class ToJsonString(MapFunction):

@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+/* Port of the original dark, GitHub-style palette into Tailwind v4 theme
+   tokens. These become utilities: bg-bg, bg-card, text-muted, text-accent,
+   border-edge, text-pos, text-neg, etc. */
+@theme {
+  --color-bg: #0f1116;
+  --color-card: #1a1d27;
+  --color-edge: #2a2e3a;
+  --color-text: #e8e8ec;
+  --color-muted: #9aa0ac;
+  --color-accent: #58a6ff;
+  --color-accent2: #f0883e;
+  --color-pos: #3fb950;
+  --color-neg: #f85149;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
