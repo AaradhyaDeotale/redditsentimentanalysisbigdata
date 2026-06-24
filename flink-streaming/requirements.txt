@@ -10,5 +10,8 @@ nltk==3.9.1
 # Output validation script
 confluent-kafka==2.3.0
 
+# Prediction cache + model-reload pub/sub
+redis==5.0.8
+
 # Tests
 pytest==8.3.3

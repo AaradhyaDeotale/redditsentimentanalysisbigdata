@@ -35,6 +35,27 @@ export const getCompare = (k1, k2) =>
 export const getComments = (keyword, limit = 50) =>
   getJSON(`/api/comments?keyword=${q(keyword)}&limit=${limit}`);
 
+// Tracked-keyword set (the keywords the pipeline actively scores; lives in Redis,
+// read live by the Flink job). The Compare view is populated from this set.
+export const getKeywords = () => getJSON("/api/keywords");
+export const addKeyword = (keyword) =>
+  postJSON("/api/keywords", { keyword });
+export const removeKeyword = (keyword) =>
+  fetch(`/api/keywords/${encodeURIComponent(keyword)}`, {
+    method: "DELETE",
+  }).then(async (res) => {
+    if (!res.ok) {
+      let detail = `${res.status} ${res.statusText}`;
+      try {
+        detail = (await res.json()).detail || detail;
+      } catch {
+        /* keep status text */
+      }
+      throw new Error(detail);
+    }
+    return res.json();
+  });
+
 export const getKafkaOverview = () => getJSON("/api/kafka/overview");
 export const getKafkaTopics = () => getJSON("/api/kafka/topics");
 export const getKafkaGroups = () => getJSON("/api/kafka/groups");
@@ -44,8 +65,11 @@ export const getFlinkJobs = () => getJSON("/api/flink/jobs");
 
 // Manual-mode controls (local dev only; gated by CONTROL_ENABLED on the server).
 export const getControlStatus = () => getJSON("/api/control/status");
-export const startProducer = (speed, limit) =>
-  postJSON("/api/control/producer/start", { speed, limit });
+// skip omitted -> server auto-advances; pass skip:0 to replay from the start.
+export const startProducer = (speed, limit, skip) =>
+  postJSON("/api/control/producer/start", { speed, limit, skip });
 export const stopProducer = () => postJSON("/api/control/producer/stop");
+export const resetOffset = () =>
+  postJSON("/api/control/producer/reset-offset");
 export const resetPipeline = (parallelism, window_sec) =>
   postJSON("/api/control/pipeline/reset", { parallelism, window_sec });

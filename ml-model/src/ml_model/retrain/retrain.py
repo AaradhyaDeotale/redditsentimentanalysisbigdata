@@ -30,6 +30,31 @@ from ml_model.retrain.retrainer import run_retrain_cycle
 log = logging.getLogger("ml_model.retrain")
 
 
+def _redis_publisher():
+    """Return a publish(channel, message) callable, or None if Redis is
+    unavailable — retraining still proceeds and Flink falls back to LATEST polling."""
+    import os
+
+    url = os.getenv("REDIS_URL")
+    if not url:
+        return None
+    try:
+        import redis
+
+        client = redis.from_url(url)
+    except Exception as exc:
+        log.warning("Redis not available, skipping reload signal: %s", exc)
+        return None
+
+    def publish(channel: str, message: str) -> None:
+        try:
+            client.publish(channel, message)
+        except Exception as exc:
+            log.warning("Could not publish reload signal: %s", exc)
+
+    return publish
+
+
 def main(argv: list[str] | None = None) -> int:
     settings = load_settings()
     parser = argparse.ArgumentParser(description="Run one retraining cycle.")
@@ -50,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
             epochs=settings.training.w2v_epochs,
         )
 
+    publisher = _redis_publisher()
+
     result = run_retrain_cycle(
         args.input,
         model_dir=args.model_dir,
@@ -57,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         test_size=settings.training.test_size,
         random_state=settings.training.random_state,
         min_tokens=settings.model.min_tokens,
+        publisher=publisher,
         **feature_kwargs,
     )
     log.info("Retrained -> version '%s' (accuracy %.4f, train %d / test %d)",

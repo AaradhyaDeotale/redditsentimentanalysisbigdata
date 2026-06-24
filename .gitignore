@@ -21,5 +21,8 @@ models/
 *.pkl
 *.joblib
 
+# Generated benchmark reports
+benchmarks/
+
 # Git worktrees
 .worktrees/

@@ -35,7 +35,7 @@ from flink_job.operators.keyword_filter import KeywordFilterFunction
 from flink_job.operators.parse import MALFORMED_TAG, ParseCommentFunction
 from flink_job.operators.sentiment_placeholder import SentimentPlaceholderFunction
 from flink_job.sources.kafka_io import build_kafka_sink, build_kafka_source
-from flink_job.operators.sentiment_ml import SentimentMLFunction
+from flink_job.operators.sentiment_ml import SentimentMLBatchFunction
 from flink_job.operators.sentiment_window import KeywordFanoutFunction, SentimentWindowFunction
 
 log = logging.getLogger("flink_job.pipeline")
@@ -105,11 +105,11 @@ def build_pipeline(env: StreamExecutionEnvironment, settings: AppSettings) -> No
         .name("keyword-filter")
     )
 
-    # Stage 4: Sentiment placeholder - hook for P4 ML model
+    # Stage 4: Sentiment ML - micro-batched scoring with optional Redis cache
     sentiment_stream = (
         keyword_stream
-        .map(SentimentMLFunction(), output_type=Types.PICKLED_BYTE_ARRAY())
-        .name("sentiment-ml")
+        .flat_map(SentimentMLBatchFunction(), output_type=Types.PICKLED_BYTE_ARRAY())
+        .name("sentiment-ml-batch")
     )
 
     # Stage 5: Assign event-time watermarks from created_utc

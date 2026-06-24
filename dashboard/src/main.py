@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from . import control, flink_proxy, kafka_admin
 from .comment_store import comment_buffer
 from .consumer import data_mode, set_sinks, start_background_consumer
+from .keywords import registry as keyword_registry
 from .store import store
 from .ws_hub import hub
 
@@ -74,6 +75,30 @@ def meta():
     Replaces the old hardcoded 'mock data keywords' line in the page.
     """
     return {"mode": data_mode(), "known_keywords": store.keywords()}
+
+
+@app.get("/api/keywords")
+def keywords_list():
+    """The live tracked-keyword set the pipeline is scoring (from Redis)."""
+    return {"keywords": keyword_registry.list()}
+
+
+@app.post("/api/keywords")
+def keywords_add(body: dict = Body(default={})):
+    """Add a keyword to the tracked set; Flink picks it up within a few seconds."""
+    try:
+        return {"keywords": keyword_registry.add(body.get("keyword", ""))}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.delete("/api/keywords/{keyword}")
+def keywords_remove(keyword: str):
+    """Stop tracking a keyword (its stored history is kept)."""
+    try:
+        return {"keywords": keyword_registry.remove(keyword)}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @app.get("/api/sentiment")
@@ -172,7 +197,10 @@ def control_status():
 def control_producer_start(body: dict = Body(default={})):
     _require_control()
     try:
-        return control.producer.start(body.get("speed", 2), body.get("limit", 60000))
+        # skip omitted -> auto-advance from the cursor; skip:0 -> replay from start
+        return control.producer.start(
+            body.get("speed", 2), body.get("limit", 60000), body.get("skip")
+        )
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -183,13 +211,22 @@ def control_producer_stop():
     return control.producer.stop()
 
 
+@app.post("/api/control/producer/reset-offset")
+def control_producer_reset_offset():
+    _require_control()
+    control.producer.reset_offset()
+    return control.producer.status()
+
+
 @app.post("/api/control/pipeline/reset")
 def control_pipeline_reset(body: dict = Body(default={})):
     _require_control()
     try:
-        return control.pipeline.reset(
+        result = control.pipeline.reset(
             body.get("parallelism", 2), body.get("window_sec", 60)
         )
+        control.producer.reset_offset()  # fresh topics -> next replay starts at 0
+        return result
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=409, detail=str(e))
 
