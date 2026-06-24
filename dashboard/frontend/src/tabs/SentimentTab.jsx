@@ -21,28 +21,31 @@ const toPoints = (pts) =>
     }))
     .slice(-MAX_POINTS);
 
-export default function SentimentTab() {
-  // Tracked set drives the dropdowns; defaults come from the server (not a
-  // hardcoded apple/android), so a refresh reflects what's actually tracked.
+export default function SentimentTab({ sel, setSel }) {
+  // Selection (kw1/kw2/active) is owned by App so it survives tab switches.
+  // Defaults come from the server (not a hardcoded apple/android), so a refresh
+  // reflects what's actually tracked.
+  const { kw1, kw2, active } = sel;
+  const setKw1 = useCallback((v) => setSel((s) => ({ ...s, kw1: v })), [setSel]);
+  const setKw2 = useCallback((v) => setSel((s) => ({ ...s, kw2: v })), [setSel]);
   const [tracked, setTracked] = useState([]);
-  const [kw1, setKw1] = useState("");
-  const [kw2, setKw2] = useState("");
-  const [active, setActive] = useState(null); // null until first keywords load
   const [state, setState] = useState(initialState);
   const [error, setError] = useState(null);
 
-  // Seed the selection from the tracked set the first time it arrives.
-  const onKeywords = useCallback((list) => {
-    setTracked(list);
-    setActive((prev) => {
-      if (prev || list.length === 0) return prev;
-      const a = list[0];
-      const b = list[1] || list[0];
-      setKw1(a);
-      setKw2(b);
-      return [a, b];
-    });
-  }, []);
+  // Seed the selection from the tracked set the first time it arrives (only if
+  // nothing is selected yet - don't clobber a choice the user already made).
+  const onKeywords = useCallback(
+    (list) => {
+      setTracked(list);
+      setSel((s) => {
+        if (s.active || list.length === 0) return s;
+        const a = list[0];
+        const b = list[1] || list[0];
+        return { kw1: a, kw2: b, active: [a, b] };
+      });
+    },
+    [setSel],
+  );
 
   const onMessage = useCallback((msg) => {
     setState((s) => applyMessage(s, msg));
@@ -90,7 +93,7 @@ export default function SentimentTab() {
     e.preventDefault();
     const a = kw1.trim().toLowerCase();
     const b = kw2.trim().toLowerCase();
-    if (a && b) setActive([a, b]);
+    if (a && b) setSel((s) => ({ ...s, active: [a, b] }));
   }
 
   // Dropdown options: the tracked set, plus whatever is currently selected (so a

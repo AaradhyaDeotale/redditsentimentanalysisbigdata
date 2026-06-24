@@ -55,7 +55,9 @@ try:
                     "error": err,
                     "ingest_ts": ctx.timestamp() if ctx.timestamp() is not None else 0,
                 }
-                ctx.output(self.MALFORMED_TAG, json.dumps(malformed, ensure_ascii=False))
+                # PyFlink emits side outputs by yielding (tag, value) - the Java
+                # ctx.output(tag, value) API does not exist on the Python context.
+                yield self.MALFORMED_TAG, json.dumps(malformed, ensure_ascii=False)
                 log.debug("Malformed record: %s", err)
                 return
 

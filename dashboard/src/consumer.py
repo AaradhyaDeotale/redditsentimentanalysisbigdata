@@ -121,21 +121,34 @@ def _parse_comment(raw_value: bytes) -> dict | None:
 
 
 def _run_real_consumer() -> None:
-    """Connect to Kafka and stream sentiment-results records into the store."""
+    """Connect to Kafka and stream sentiment-results records into the store.
+
+    The in-memory store is a materialized VIEW of the (durable, infinite-
+    retention) sentiment-results topic, so we rebuild it from the start of the
+    topic on every boot rather than resuming from a committed group offset -
+    otherwise a fresh dashboard process would show an empty chart even though
+    the windows are all still in Kafka.
+
+    We use a UNIQUE, ephemeral consumer group per process so this consumer is
+    always the sole member and owns the (single) partition - a shared group
+    would split the partition across members and could leave us with none. With
+    a fresh group + earliest, every boot replays the whole topic into the store.
+    """
     from confluent_kafka import Consumer  # lazy import - mock mode needs no broker
 
     conf = {
         "bootstrap.servers": os.getenv(
             "KAFKA_BROKER", "localhost:9092,localhost:9095,localhost:9096"
         ),
-        "group.id": os.getenv("KAFKA_GROUP_ID", "dashboard-consumer"),
-        "auto.offset.reset": os.getenv("KAFKA_AUTO_OFFSET_RESET", "earliest"),
+        "group.id": f"dashboard-view-{os.getpid()}-{int(time.time())}",
+        "auto.offset.reset": "earliest",
+        "enable.auto.commit": False,
     }
     topic = os.getenv("KAFKA_TOPIC", "sentiment-results")
 
     consumer = Consumer(conf)
     consumer.subscribe([topic])
-    print(f"[consumer] subscribed to '{topic}' on {conf['bootstrap.servers']}")
+    print(f"[consumer] subscribed to '{topic}' (full replay, group {conf['group.id']})")
 
     try:
         while True:

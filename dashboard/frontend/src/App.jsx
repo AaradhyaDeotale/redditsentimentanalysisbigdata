@@ -17,6 +17,10 @@ const TABS = [
 export default function App() {
   const [tab, setTab] = useState("sentiment");
   const [meta, setMeta] = useState(null);
+  // Compare selection lives here (not in SentimentTab) so it survives tab
+  // switches - SentimentTab unmounts when you leave the tab, which would
+  // otherwise reset the picks back to the first two tracked keywords.
+  const [sel, setSel] = useState({ kw1: "", kw2: "", active: null });
 
   useEffect(() => {
     getMeta()
@@ -41,7 +45,7 @@ export default function App() {
       <Tabs tabs={TABS} active={tab} onChange={setTab} />
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-6">
-        {tab === "sentiment" && <SentimentTab />}
+        {tab === "sentiment" && <SentimentTab sel={sel} setSel={setSel} />}
         {tab === "kafka" && <KafkaTab />}
         {tab === "flink" && <FlinkTab />}
         {tab === "overview" && <OverviewTab meta={meta} />}
