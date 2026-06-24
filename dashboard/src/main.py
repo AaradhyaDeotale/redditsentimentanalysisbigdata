@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from . import control, flink_proxy, kafka_admin
 from .comment_store import comment_buffer
 from .consumer import data_mode, set_sinks, start_background_consumer
+from .keywords import registry as keyword_registry
 from .store import store
 from .ws_hub import hub
 
@@ -74,6 +75,30 @@ def meta():
     Replaces the old hardcoded 'mock data keywords' line in the page.
     """
     return {"mode": data_mode(), "known_keywords": store.keywords()}
+
+
+@app.get("/api/keywords")
+def keywords_list():
+    """The live tracked-keyword set the pipeline is scoring (from Redis)."""
+    return {"keywords": keyword_registry.list()}
+
+
+@app.post("/api/keywords")
+def keywords_add(body: dict = Body(default={})):
+    """Add a keyword to the tracked set; Flink picks it up within a few seconds."""
+    try:
+        return {"keywords": keyword_registry.add(body.get("keyword", ""))}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.delete("/api/keywords/{keyword}")
+def keywords_remove(keyword: str):
+    """Stop tracking a keyword (its stored history is kept)."""
+    try:
+        return {"keywords": keyword_registry.remove(keyword)}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @app.get("/api/sentiment")
