@@ -8,8 +8,8 @@
 FROM node:20-slim AS frontend
 WORKDIR /build/frontend
 # install deps first so this layer caches across source-only changes
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci || npm install
+COPY frontend/package.json ./
+RUN npm install
 COPY frontend/ ./
 # vite build writes to ../src/web (see vite.config.js base/outDir)
 RUN npm run build
