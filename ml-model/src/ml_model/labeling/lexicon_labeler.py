@@ -29,7 +29,8 @@ NEUTRAL = "neutral"
 class LabelResult:
     """Outcome of labelling one comment."""
     label: str          # POSITIVE | NEGATIVE | NEUTRAL
-    compound: float     # VADER compound score in [-1.0, 1.0]
+    compound: float     # compound score in [-1.0, 1.0]
+    source: str = "vader"   # which labeler produced it (e.g. "vader", "lexicon")
 
 
 def pick_text(record: dict[str, Any]) -> str:
