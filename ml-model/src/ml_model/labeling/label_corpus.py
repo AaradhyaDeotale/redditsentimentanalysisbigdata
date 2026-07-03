@@ -1,8 +1,10 @@
 """
 label_corpus.py
 ---------------
-Read a corpus of cleaned comments (JSONL, one record per line), attach a VADER-derived sentiment label to each, drop neutral comments
-(unless --keep-neutral), and write a labelled dataset for training.
+Read a corpus of cleaned comments (JSONL, one record per line), attach a
+lexicon-derived sentiment label to each (language-aware: VADER for English,
+per-language word lists otherwise), drop neutral comments (unless
+--keep-neutral), and write a labelled dataset for training.
 
 Run it as a script from the ml-model/ directory:
 
@@ -10,7 +12,7 @@ Run it as a script from the ml-model/ directory:
         --input data/cleaned_comments.jsonl \
         --output data/labeled_comments.jsonl
 
-The label is produced by VADER for LABELLING ONLY — the model that actually
+The label is produced by lexicons for LABELLING ONLY — the model that actually
 classifies sentiment is trained by us later (Phase 4).
 """
 
@@ -36,7 +38,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from config.settings import load_settings
-from ml_model.labeling.lexicon_labeler import LabelResult, LexiconLabeler, NEUTRAL, pick_text
+from ml_model.labeling.lexicon_labeler import LabelResult, LexiconLabeler, NEUTRAL
+from ml_model.labeling.multilingual_labeler import MultilingualLexiconLabeler
 
 log = logging.getLogger("ml_model.labeling.label_corpus")
 
@@ -62,25 +65,29 @@ def iter_records(path: Path) -> Iterator[dict[str, Any]]:
 def build_labeled_record(record: dict[str, Any], result: LabelResult) -> dict[str, Any]:
     out = {field: record.get(field) for field in CARRY_FIELDS}
     out["label"] = result.label
+    # Compound score from whichever lexicon labelled it; `label_source` records
+    # which one (e.g. "vader" for English, "lexicon" for other languages).
     out["vader_compound"] = round(result.compound, 4)
+    out["label_source"] = result.source
     return out
 
 
 def label_corpus(
     input_path: Path,
     output_path: Path,
-    labeler: LexiconLabeler,
+    labeler: LexiconLabeler | MultilingualLexiconLabeler,
     keep_neutral: bool = False,
 ) -> tuple[Counter, int]:
     """Label every record in input_path and write kept records to output_path.
 
-    Returns (label_counts, records_written).
+    Uses ``label_record`` so the labeler can route on each comment's detected
+    ``language``. Returns (label_counts, records_written).
     """
     counts: Counter = Counter()
     written = 0
     with output_path.open("w", encoding="utf-8") as out_fh:
         for record in iter_records(input_path):
-            result = labeler.label(pick_text(record))
+            result = labeler.label_record(record)
             counts[result.label] += 1
             if result.label == NEUTRAL and not keep_neutral:
                 continue
@@ -103,6 +110,15 @@ def _parse_args(argv: list[str] | None, default_band: float) -> argparse.Namespa
         "--keep-neutral", action="store_true",
         help="keep neutral comments instead of dropping them",
     )
+    parser.add_argument(
+        "--lexicon-dir", type=str, default=None,
+        help="optional dir of <lang>.txt word lists to extend the built-in "
+             "non-English lexicons (lines: 'word<TAB>pos' or 'word<TAB>neg')",
+    )
+    parser.add_argument(
+        "--english-only", action="store_true",
+        help="use plain VADER for every comment (disable per-language routing)",
+    )
     return parser.parse_args(argv)
 
 
@@ -120,7 +136,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
-    labeler = LexiconLabeler(neutral_band=args.neutral_band)
+    if args.english_only:
+        labeler: LexiconLabeler | MultilingualLexiconLabeler = LexiconLabeler(
+            neutral_band=args.neutral_band)
+    else:
+        labeler = MultilingualLexiconLabeler(
+            neutral_band=args.neutral_band, lexicon_dir=args.lexicon_dir)
     counts, written = label_corpus(args.input, args.output, labeler, keep_neutral=args.keep_neutral)
 
     total = sum(counts.values())
