@@ -5,8 +5,6 @@ services:
       dockerfile: docker/Dockerfile
       additional_contexts:
         mlmodel_src: ../../ml-model
-      platforms:
-        - linux/arm64
     image: flink-reddit-jobmanager:1.18
     container_name: flink-jobmanager
     command: jobmanager
@@ -48,8 +46,6 @@ services:
       dockerfile: docker/Dockerfile
       additional_contexts:
         mlmodel_src: ../../ml-model
-      platforms:
-        - linux/arm64
     image: flink-reddit-taskmanager:1.18
     container_name: flink-taskmanager
     command: taskmanager
@@ -91,8 +87,6 @@ services:
       dockerfile: docker/Dockerfile
       additional_contexts:
         mlmodel_src: ../../ml-model
-      platforms:
-        - linux/arm64
     image: flink-reddit-job:1.18
     container_name: flink-reddit-job
     depends_on:

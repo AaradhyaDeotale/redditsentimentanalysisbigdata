@@ -24,6 +24,14 @@ services:
       KAFKA_COMMENTS_OFFSET_RESET: latest
       FLINK_API_URL: http://jobmanager:8081
       USE_MOCK_DATA: "false"
+      CONTROL_ENABLED: "true"
+      # control.py producer subprocess config
+      PRODUCER_PYTHON: python3
+      KAFKA_INPUT_TOPIC: reddit-comments
+    volumes:
+      - ../../kafka-producer:/kafka-producer:ro
+      - ../../RC_2019-04.zst:/RC_2019-04.zst:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - bd_streaming
     restart: unless-stopped

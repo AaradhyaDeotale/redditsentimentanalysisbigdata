@@ -5,3 +5,4 @@ redis==5.0.8
 python-dotenv==1.0.1
 pytest==8.1.1
 httpx==0.27.0
+zstandard==0.22.0
