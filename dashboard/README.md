@@ -20,6 +20,28 @@ Kafka topics: **`sentiment-results`** (aggregated windows → chart) and
 
 ---
 
+## Screenshots
+
+**Sentiment** — compare two keywords live, with a streaming chart and comment feed:
+
+![Sentiment tab](docs/screenshots/sentiment-tab.jpeg)
+
+**Kafka** — brokers, topics, and consumer groups:
+
+![Kafka tab](docs/screenshots/kafka-tab.jpeg)
+
+**Flink** — running jobs, slots, and version info:
+
+![Flink tab](docs/screenshots/flink-tab.jpeg)
+
+**Pipeline** — end-to-end health board with manual replay/reset controls:
+
+![Pipeline tab](docs/screenshots/pipeline-tab.jpeg)
+
+![Pipeline tab — replay in progress](docs/screenshots/pipeline-replay.jpeg)
+
+---
+
 ## What's inside
 
 ```
