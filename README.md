@@ -365,8 +365,23 @@ Full per-component troubleshooting tables live in each subfolder's README.
 
 ## Screenshots
 
-_Screenshots of the live dashboard (sentiment charts, comment feed, and
-pipeline health board) will be added here._
+**Sentiment** — compare two keywords live, with a streaming chart and comment feed:
+
+![Sentiment tab](dashboard/docs/screenshots/sentiment-tab.jpeg)
+
+**Kafka** — brokers, topics, and consumer groups:
+
+![Kafka tab](dashboard/docs/screenshots/kafka-tab.jpeg)
+
+**Flink** — running jobs, slots, and version info:
+
+![Flink tab](dashboard/docs/screenshots/flink-tab.jpeg)
+
+**Pipeline** — end-to-end health board with manual replay/reset controls:
+
+![Pipeline tab](dashboard/docs/screenshots/pipeline-tab.jpeg)
+
+![Pipeline tab — replay in progress](dashboard/docs/screenshots/pipeline-replay.jpeg)
 
 ---
 
