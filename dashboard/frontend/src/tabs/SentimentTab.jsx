@@ -31,6 +31,7 @@ export default function SentimentTab({ sel, setSel }) {
   const [tracked, setTracked] = useState([]);
   const [state, setState] = useState(initialState);
   const [error, setError] = useState(null);
+  const [range, setRange] = useState(null); // { start, end } unix seconds from drag-select, or null
 
   // Seed the selection from the tracked set the first time it arrives (only if
   // nothing is selected yet - don't clobber a choice the user already made).
@@ -60,6 +61,7 @@ export default function SentimentTab({ sel, setSel }) {
     const [a, b] = active;
     setState(initialState);
     setError(null);
+    setRange(null);
     (async () => {
       try {
         const [cmp, c1, c2] = await Promise.all([
@@ -103,6 +105,15 @@ export default function SentimentTab({ sel, setSel }) {
   const seriesA = state.windows[a] || [];
   const seriesB = state.windows[b] || [];
 
+  // When a time range is selected via drag, narrow the stat cards and comment
+  // feed to it; the chart itself always sees the full series (it just zooms).
+  const inRange = (t) => !range || (t >= range.start && t <= range.end);
+  const rangedA = range ? seriesA.filter((p) => inRange(p.window_end)) : seriesA;
+  const rangedB = range ? seriesB.filter((p) => inRange(p.window_end)) : seriesB;
+  const rangedComments = range
+    ? state.comments.filter((c) => inRange(c.created_utc))
+    : state.comments;
+
   return (
     <div className="space-y-5">
       <TrackedKeywords onKeywords={onKeywords} />
@@ -139,16 +150,23 @@ export default function SentimentTab({ sel, setSel }) {
       ) : (
         <>
           <div className="flex flex-wrap gap-4">
-            <SentimentCard keyword={a} points={seriesA} accentClass="text-accent" />
-            <SentimentCard keyword={b} points={seriesB} accentClass="text-accent2" />
+            <SentimentCard keyword={a} points={rangedA} accentClass="text-accent" />
+            <SentimentCard keyword={b} points={rangedB} accentClass="text-accent2" />
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <div className="lg:col-span-2">
-              <SentimentChart a={a} b={b} seriesA={seriesA} seriesB={seriesB} />
+              <SentimentChart
+                a={a}
+                b={b}
+                seriesA={seriesA}
+                seriesB={seriesB}
+                range={range}
+                onRangeChange={setRange}
+              />
             </div>
             <div className="h-72 lg:h-auto">
-              <CommentFeed comments={state.comments} keywords={active} />
+              <CommentFeed comments={rangedComments} keywords={active} />
             </div>
           </div>
         </>

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -7,6 +8,7 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  ReferenceArea,
 } from "recharts";
 
 const fmtTime = (s) =>
@@ -35,15 +37,68 @@ function buildChartData(a, b, seriesA, seriesB) {
   return [...rows.values()].sort((x, y) => x.t - y.t);
 }
 
-export default function SentimentChart({ a, b, seriesA, seriesB }) {
+// Drag across the plot area to select a timestamp range: mousedown/mousemove
+// track a transient local selection, mouseup commits it via onRangeChange so
+// the parent can zoom the axis and filter other panels (comments, cards) to
+// match. `range` is fully controlled by the parent - this component has no
+// persistent zoom state of its own, only the in-progress drag rectangle.
+export default function SentimentChart({ a, b, seriesA, seriesB, range, onRangeChange }) {
   const data = buildChartData(a, b, seriesA, seriesB);
+  const [drag, setDrag] = useState(null); // { left, right } while actively dragging
+
+  function handleMouseDown(e) {
+    if (e && e.activeLabel != null) {
+      setDrag({ left: e.activeLabel, right: e.activeLabel });
+    }
+  }
+
+  function handleMouseMove(e) {
+    if (drag && e && e.activeLabel != null) {
+      setDrag((d) => ({ ...d, right: e.activeLabel }));
+    }
+  }
+
+  function handleMouseUp() {
+    if (drag) {
+      let { left, right } = drag;
+      if (left > right) [left, right] = [right, left];
+      if (left !== right) onRangeChange?.({ start: left, end: right });
+      setDrag(null);
+    }
+  }
+
   return (
     <div className="h-72 w-full rounded-xl border border-edge bg-card p-4">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: -12 }}>
+      <div className="mb-1 flex items-center justify-between text-xs text-muted">
+        <span>
+          {range
+            ? `${fmtTime(range.start)} – ${fmtTime(range.end)}`
+            : "drag on the chart to select a time range"}
+        </span>
+        {range && (
+          <button
+            type="button"
+            onClick={() => onRangeChange?.(null)}
+            className="rounded-md border border-edge px-2 py-0.5 hover:border-accent hover:text-text"
+          >
+            Clear selection
+          </button>
+        )}
+      </div>
+      <ResponsiveContainer width="100%" height="90%">
+        <LineChart
+          data={data}
+          margin={{ top: 8, right: 16, bottom: 0, left: -12 }}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+        >
           <CartesianGrid stroke="#2a2e3a" vertical={false} />
           <XAxis
             dataKey="t"
+            type="number"
+            domain={range ? [range.start, range.end] : ["dataMin", "dataMax"]}
+            allowDataOverflow
             tickFormatter={fmtTime}
             stroke="#9aa0ac"
             fontSize={12}
@@ -51,6 +106,7 @@ export default function SentimentChart({ a, b, seriesA, seriesB }) {
           />
           <YAxis
             domain={[0, 100]}
+            allowDataOverflow
             stroke="#9aa0ac"
             fontSize={12}
             tickFormatter={(v) => `${v}%`}
@@ -84,6 +140,15 @@ export default function SentimentChart({ a, b, seriesA, seriesB }) {
             isAnimationActive={false}
             connectNulls
           />
+          {drag && (
+            <ReferenceArea
+              x1={drag.left}
+              x2={drag.right}
+              strokeOpacity={0.3}
+              fill="#58a6ff"
+              fillOpacity={0.2}
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
     </div>
