@@ -16,7 +16,12 @@ function CommentRow({ c }) {
         {c.sentiment_score?.toFixed(2)}
       </span>
       <div className="min-w-0">
-        <p className="truncate text-sm text-text">{c.body || "(no text)"}</p>
+        <p
+          className="truncate text-sm text-text"
+          title={c.body || "(no text)"}
+        >
+          {c.body || "(no text)"}
+        </p>
         <p className="mt-0.5 text-xs text-muted">
           u/{c.author} · {c.matched_keywords?.join(", ")}
         </p>

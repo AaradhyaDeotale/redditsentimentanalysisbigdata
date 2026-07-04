@@ -23,6 +23,7 @@ services:
       KAFKA_COMMENTS_GROUP_ID: dashboard-comments
       KAFKA_COMMENTS_OFFSET_RESET: latest
       FLINK_API_URL: http://jobmanager:8081
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
       USE_MOCK_DATA: "false"
       CONTROL_ENABLED: "true"
       # control.py producer subprocess config
