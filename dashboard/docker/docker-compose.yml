@@ -11,6 +11,7 @@ services:
       dockerfile: docker/Dockerfile
     image: sentiment-dashboard:latest
     container_name: sentiment-dashboard
+    mem_limit: 700m
     ports:
       - "8000:8000"
     environment:

@@ -8,6 +8,7 @@ services:
     image: flink-reddit-jobmanager:1.18
     container_name: flink-jobmanager
     command: jobmanager
+    mem_limit: 1700m
     ports:
       - "8081:8081"
     environment:
@@ -49,6 +50,7 @@ services:
     image: flink-reddit-taskmanager:1.18
     container_name: flink-taskmanager
     command: taskmanager
+    mem_limit: 1850m
     depends_on:
       - jobmanager
     environment:
@@ -89,6 +91,7 @@ services:
         mlmodel_src: ../../ml-model
     image: flink-reddit-job:1.18
     container_name: flink-reddit-job
+    mem_limit: 512m
     depends_on:
       - jobmanager
       - taskmanager
@@ -128,6 +131,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: bd-redis
+    mem_limit: 200m
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     networks:
