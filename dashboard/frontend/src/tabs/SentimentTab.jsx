@@ -7,6 +7,11 @@ import {
   MAX_COMMENTS,
   MAX_POINTS,
 } from "../lib/messages.js";
+import {
+  AGGREGATION_OPTIONS,
+  DEFAULT_BUCKET_SECONDS,
+  bucketPoints,
+} from "../lib/aggregate.js";
 import SentimentCard from "../components/SentimentCard.jsx";
 import SentimentChart from "../components/SentimentChart.jsx";
 import CommentFeed from "../components/CommentFeed.jsx";
@@ -32,6 +37,7 @@ export default function SentimentTab({ sel, setSel }) {
   const [state, setState] = useState(initialState);
   const [error, setError] = useState(null);
   const [range, setRange] = useState(null); // { start, end } unix seconds from drag-select, or null
+  const [bucketSeconds, setBucketSeconds] = useState(DEFAULT_BUCKET_SECONDS); // chart aggregation granularity
 
   // Seed the selection from the tracked set the first time it arrives (only if
   // nothing is selected yet - don't clobber a choice the user already made).
@@ -104,6 +110,8 @@ export default function SentimentTab({ sel, setSel }) {
   const [a, b] = active || ["", ""];
   const seriesA = state.windows[a] || [];
   const seriesB = state.windows[b] || [];
+  const chartSeriesA = bucketPoints(seriesA, bucketSeconds);
+  const chartSeriesB = bucketPoints(seriesB, bucketSeconds);
 
   // When a time range is selected via drag, narrow the stat cards and comment
   // feed to it; the chart itself always sees the full series (it just zooms).
@@ -121,6 +129,15 @@ export default function SentimentTab({ sel, setSel }) {
       <form className="flex flex-wrap items-end gap-3" onSubmit={applyCompare}>
         <Select label="Keyword 1" value={kw1} onChange={setKw1} options={options} />
         <Select label="Keyword 2" value={kw2} onChange={setKw2} options={options} />
+        <Select
+          label="Aggregate by"
+          value={String(bucketSeconds)}
+          onChange={(v) => setBucketSeconds(Number(v))}
+          options={AGGREGATION_OPTIONS.map((o) => String(o.seconds))}
+          renderOption={(v) =>
+            AGGREGATION_OPTIONS.find((o) => o.seconds === Number(v))?.label ?? v
+          }
+        />
         <button
           type="submit"
           className="rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-bg hover:opacity-90"
@@ -159,8 +176,8 @@ export default function SentimentTab({ sel, setSel }) {
               <SentimentChart
                 a={a}
                 b={b}
-                seriesA={seriesA}
-                seriesB={seriesB}
+                seriesA={chartSeriesA}
+                seriesB={chartSeriesB}
                 range={range}
                 onRangeChange={setRange}
               />
@@ -175,7 +192,7 @@ export default function SentimentTab({ sel, setSel }) {
   );
 }
 
-function Select({ label, value, onChange, options }) {
+function Select({ label, value, onChange, options, renderOption }) {
   return (
     <label className="flex flex-col gap-1">
       <span className="text-xs text-muted">{label}</span>
@@ -187,7 +204,7 @@ function Select({ label, value, onChange, options }) {
         {value === "" && <option value="">—</option>}
         {options.map((opt) => (
           <option key={opt} value={opt}>
-            {opt}
+            {renderOption ? renderOption(opt) : opt}
           </option>
         ))}
       </select>
