@@ -5,7 +5,12 @@ function scoreColor(label) {
 }
 
 function CommentRow({ c }) {
-  const sign = c.sentiment_score > 0 ? "+" : "";
+  const sign =
+    c.sentiment_label === "negative"
+      ? "-"
+      : c.sentiment_label === "positive"
+        ? "+"
+        : "";
   return (
     <li className="flex gap-3 border-b border-edge/60 px-1 py-2.5 last:border-0">
       <span
@@ -13,7 +18,7 @@ function CommentRow({ c }) {
         title={c.sentiment_label}
       >
         {sign}
-        {c.sentiment_score?.toFixed(2)}
+        {Math.abs(c.sentiment_score ?? 0).toFixed(2)}
       </span>
       <div className="min-w-0">
         <p
