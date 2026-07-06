@@ -21,6 +21,8 @@ import re
 import time
 from typing import Any
 
+from flink_job.operators.disambiguation import AMBIGUOUS_KEYWORDS, resolve_sense
+
 log = logging.getLogger("flink_job.keyword_filter")
 
 KEYWORD_REDIS_KEY = os.getenv("KEYWORD_REDIS_KEY", "flink:keywords")
@@ -68,10 +70,13 @@ def _connect_redis():
 
 def _do_map(record: dict[str, Any], patterns: dict) -> dict[str, Any]:
     if not patterns:
-        return {**record, "matched_keywords": []}
+        return {**record, "matched_keywords": [], "keyword_senses": {}}
     search_text = record.get("cleaned_body", "") or " ".join(record.get("tokens", []))
     matched = [kw for kw, pattern in patterns.items() if pattern.search(search_text)]
-    return {**record, "matched_keywords": matched}
+    senses = {
+        kw: resolve_sense(kw, search_text) for kw in matched if kw in AMBIGUOUS_KEYWORDS
+    }
+    return {**record, "matched_keywords": matched, "keyword_senses": senses}
 
 
 try:

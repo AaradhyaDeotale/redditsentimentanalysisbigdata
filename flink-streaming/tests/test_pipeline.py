@@ -176,12 +176,14 @@ class TestTokenizer:
 
 class TestKeywordFilter:
     def test_matching_record(self, keyword_filter):
+        # matched_keywords stays plain; sense goes into keyword_senses
         record = {
             "cleaned_body": "I love my Apple iPhone",
             "tokens": ["I", "love", "my", "Apple", "iPhone"],
         }
         result = keyword_filter.map(record)
         assert "apple" in result["matched_keywords"]
+        assert result["keyword_senses"] == {"apple": "company"}
 
     def test_non_matching_record(self, keyword_filter):
         record = {
@@ -190,8 +192,11 @@ class TestKeywordFilter:
         }
         result = keyword_filter.map(record)
         assert result["matched_keywords"] == []
+        assert result["keyword_senses"] == {}
 
     def test_multiple_matches(self, keyword_filter):
+        # No sense-context words present -> apple is ambiguous; android
+        # (not in the ambiguous config) has no entry in keyword_senses.
         record = {
             "cleaned_body": "Comparing Apple vs Android phones",
             "tokens": ["Comparing", "Apple", "vs", "Android", "phones"],
@@ -199,6 +204,7 @@ class TestKeywordFilter:
         result = keyword_filter.map(record)
         assert "apple" in result["matched_keywords"]
         assert "android" in result["matched_keywords"]
+        assert result["keyword_senses"] == {"apple": "ambiguous"}
 
     def test_no_partial_match(self, keyword_filter):
         # apple should NOT match pineapple
@@ -208,14 +214,37 @@ class TestKeywordFilter:
         }
         result = keyword_filter.map(record)
         assert "apple" not in result["matched_keywords"]
+        assert result["keyword_senses"] == {}
 
     def test_case_insensitive(self, keyword_filter):
+        # No sense-context words present -> ambiguous, regardless of case
         record = {
             "cleaned_body": "APPLE makes great phones",
             "tokens": ["APPLE", "makes", "great", "phones"],
         }
         result = keyword_filter.map(record)
         assert "apple" in result["matched_keywords"]
+        assert result["keyword_senses"] == {"apple": "ambiguous"}
+
+    def test_fruit_sense_tagged(self, keyword_filter):
+        record = {
+            "cleaned_body": "I ate an apple from the tree",
+            "tokens": ["I", "ate", "an", "apple", "from", "the", "tree"],
+        }
+        result = keyword_filter.map(record)
+        assert "apple" in result["matched_keywords"]
+        assert result["keyword_senses"] == {"apple": "fruit"}
+
+    def test_non_ambiguous_keyword_absent_from_senses(self, keyword_filter):
+        # android is not in the ambiguous config, so it must never appear
+        # in keyword_senses even though it matches.
+        record = {
+            "cleaned_body": "Android phones are great",
+            "tokens": ["Android", "phones", "are", "great"],
+        }
+        result = keyword_filter.map(record)
+        assert "android" in result["matched_keywords"]
+        assert "android" not in result["keyword_senses"]
 
 
 class TestCleanedRecordSchema:
