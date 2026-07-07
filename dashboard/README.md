@@ -7,7 +7,9 @@ app (served by FastAPI) with four tabs:
   live feed of individual scored comments.
 - **Kafka** — brokers, topics, and consumer groups (via the Kafka AdminClient).
 - **Flink** — running jobs, slots, and state (via the Flink JobManager REST API).
-- **Pipeline** — an end-to-end health board: Producer → Kafka → Flink → ML → Dashboard.
+- **Pipeline** — operational flow diagram in four stages (ingestion → Flink processing
+  → Kafka outputs → dashboard) with color-coded health status on each hop; includes
+  manual replay/reset controls.
 
 ```
 Reddit data (P1) → Kafka (P2) → Flink preprocessing (P3) → ML model (P4) → [ THIS: dashboard (P5) ] → cloud (P6)
@@ -34,11 +36,20 @@ Kafka topics: **`sentiment-results`** (aggregated windows → chart) and
 
 ![Flink tab](docs/screenshots/flink-tab.jpeg)
 
-**Pipeline** — end-to-end health board with manual replay/reset controls:
+**Pipeline** — operational flow diagram with color-coded health status and manual replay/reset controls:
 
 ![Pipeline tab](docs/screenshots/pipeline-tab.jpeg)
 
 ![Pipeline tab — replay in progress](docs/screenshots/pipeline-replay.jpeg)
+
+The Pipeline tab is laid out in four sections top-to-bottom:
+
+1. **Ingestion** — `RC_2019-04.zst` → Producer → `reddit-comments`
+2. **Stream processing** — Flink Job with side-inputs from `ml-model store` (hot-reload) and `Redis keywords` (tracked keywords)
+3. **Kafka outputs** — `reddit-comments-malformed`, `reddit-comments-cleaned`, `sentiment-results`
+4. **Dashboard** — DASH (FastAPI) consumes cleaned comments + window aggregates (+ keywords from Redis) → React UI
+
+Green arrows mean data is flowing; amber means a stage is waiting; red marks a blocked step. An issue banner points to the first problem on the critical path.
 
 ---
 

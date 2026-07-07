@@ -256,10 +256,10 @@ docker compose -f docker/docker-compose.yml up --build
 ```
 
 Open **http://localhost:8000**. The dashboard's **Pipeline** tab shows an
-end-to-end health board (Producer → Kafka → Flink → ML → Dashboard), and
-its **control panel** can start/stop the producer and reset the pipeline
-directly from the UI (local development only - gated behind
-`CONTROL_ENABLED`).
+operational flow diagram in four stages (ingestion → Flink → Kafka outputs →
+dashboard) with color-coded health on each hop, and its **control panel** can
+start/stop the producer and reset the pipeline directly from the UI (local
+development only - gated behind `CONTROL_ENABLED`).
 
 ### 5. Replay data into the pipeline
 
@@ -377,11 +377,14 @@ Full per-component troubleshooting tables live in each subfolder's README.
 
 ![Flink tab](dashboard/docs/screenshots/flink-tab.jpeg)
 
-**Pipeline** — end-to-end health board with manual replay/reset controls:
+**Pipeline** — operational flow diagram with color-coded health status and manual replay/reset controls:
 
 ![Pipeline tab](dashboard/docs/screenshots/pipeline-tab.jpeg)
 
 ![Pipeline tab — replay in progress](dashboard/docs/screenshots/pipeline-replay.jpeg)
+
+> **Note:** Replace the Pipeline screenshots after UI changes — capture the
+> **Pipeline** tab at `http://localhost:8000` (idle and during an active replay).
 
 ---
 
