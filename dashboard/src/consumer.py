@@ -16,6 +16,11 @@ Kafka message is one already-summarized record. Confirmed schema:
       "comment_count": 143
     }
 
+Since P3's word-sense disambiguation (see git history), ambiguous keywords fan
+out into sense-qualified records - "keyword" may be "apple:company" - with a
+"base_keyword" ("apple") alongside for matching. `_parse` derives base_keyword
+by splitting on ":" if the upstream message omits it.
+
 > Earlier in development this file did per-comment aggregation on the dashboard
 > side - removed once Sahil confirmed P4 aggregates upstream. See git history.
 
@@ -79,9 +84,12 @@ def _parse(raw_value: bytes) -> dict | None:
     if not keyword:
         return None
 
+    base_keyword = msg.get("base_keyword") or str(keyword).split(":", 1)[0]
+
     try:
         return {
             "keyword": str(keyword),
+            "base_keyword": str(base_keyword).lower(),
             "window_end": int(msg.get("window_end") or time.time()),
             "positive_ratio": float(msg.get("positive_ratio", 0.0)),
             "comment_count": int(msg.get("comment_count", 0)),

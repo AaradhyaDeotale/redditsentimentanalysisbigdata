@@ -57,3 +57,27 @@ def test_parse_rejects_malformed_messages():
     assert good["keyword"] == "apple"
     assert good["positive_ratio"] == 0.82
     assert good["comment_count"] == 143
+
+
+def test_parse_derives_base_keyword_from_sense_qualified_keyword():
+    """No explicit base_keyword in the message: split 'apple:company' on ':'."""
+    from src.consumer import _parse
+    record = _parse(b'{"keyword":"apple:company","window_end":1554076800,'
+                     b'"positive_ratio":0.82,"comment_count":143}')
+    assert record["keyword"] == "apple:company"  # untouched, for the frontend
+    assert record["base_keyword"] == "apple"
+
+
+def test_parse_prefers_explicit_base_keyword():
+    from src.consumer import _parse
+    record = _parse(b'{"keyword":"apple:company","base_keyword":"apple",'
+                     b'"window_end":1554076800,"positive_ratio":0.82,'
+                     b'"comment_count":143}')
+    assert record["base_keyword"] == "apple"
+
+
+def test_parse_plain_keyword_base_keyword_matches_itself():
+    from src.consumer import _parse
+    record = _parse(b'{"keyword":"android","window_end":1554076800,'
+                     b'"positive_ratio":0.5,"comment_count":10}')
+    assert record["base_keyword"] == "android"
