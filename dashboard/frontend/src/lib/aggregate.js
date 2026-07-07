@@ -49,3 +49,130 @@ export function bucketPoints(points, bucketSeconds) {
     }))
     .sort((x, y) => x.window_end - y.window_end);
 }
+
+const EMPTY_SENTIMENT = { positive: 0, negative: 0, neutral: 0 };
+
+function normalizeLabel(label) {
+  if (label === "positive" || label === "negative") return label;
+  return "neutral";
+}
+
+/** Bucket scored comments into positive / negative / neutral counts per keyword. */
+export function bucketCommentsBySentiment(comments, keyword, bucketSeconds) {
+  if (!comments?.length || !keyword || !bucketSeconds) return [];
+  const kw = keyword.toLowerCase();
+  const buckets = new Map();
+
+  for (const c of comments) {
+    const matches = (c.matched_keywords || []).some(
+      (k) => String(k).toLowerCase() === kw,
+    );
+    if (!matches) continue;
+    const t =
+      Math.floor((c.created_utc || 0) / bucketSeconds) * bucketSeconds;
+    const bucket = buckets.get(t) || {
+      window_end: t,
+      ...EMPTY_SENTIMENT,
+    };
+    const label = normalizeLabel(c.sentiment_label);
+    bucket[label] += 1;
+    buckets.set(t, bucket);
+  }
+
+  return [...buckets.values()].sort((x, y) => x.window_end - y.window_end);
+}
+
+/** Fill time buckets that have window aggregates but no comments in the feed. */
+function supplementFromWindows(buckets, points, bucketSeconds, prefix) {
+  const map = new Map(buckets.map((b) => [b.t, { ...b }]));
+
+  for (const p of points || []) {
+    const t = Math.floor(p.window_end / bucketSeconds) * bucketSeconds;
+    const existing = map.get(t);
+    const existingTotal = existing
+      ? (existing[`${prefix}_positive`] || 0) +
+        (existing[`${prefix}_negative`] || 0) +
+        (existing[`${prefix}_neutral`] || 0)
+      : 0;
+    if (existingTotal > 0) continue;
+
+    const count = p.comment_count || 0;
+    if (count <= 0) continue;
+    const positive = Math.round((p.positive_ratio || 0) * count);
+    const negative = Math.max(0, count - positive);
+    const row = existing || { t };
+    row[`${prefix}_positive`] = positive;
+    row[`${prefix}_negative`] = negative;
+    row[`${prefix}_neutral`] = 0;
+    map.set(t, row);
+  }
+
+  return map;
+}
+
+/**
+ * Build merged chart rows: stacked sentiment bars (per keyword) + positive %
+ * lines from window series.
+ */
+export function buildSentimentChartRows(
+  comments,
+  seriesA,
+  seriesB,
+  keywordA,
+  keywordB,
+  bucketSeconds,
+) {
+  const aComments = bucketCommentsBySentiment(comments, keywordA, bucketSeconds);
+  const bComments = bucketCommentsBySentiment(comments, keywordB, bucketSeconds);
+  const aWindows = bucketPoints(seriesA, bucketSeconds);
+  const bWindows = bucketPoints(seriesB, bucketSeconds);
+
+  const rows = new Map();
+
+  const ensure = (t) => {
+    if (!rows.has(t)) {
+      rows.set(t, {
+        t,
+        a_positive: 0,
+        a_negative: 0,
+        a_neutral: 0,
+        b_positive: 0,
+        b_negative: 0,
+        b_neutral: 0,
+        [keywordA]: null,
+        [keywordB]: null,
+      });
+    }
+    return rows.get(t);
+  };
+
+  for (const b of aComments) {
+    const row = ensure(b.window_end);
+    row.a_positive = b.positive;
+    row.a_negative = b.negative;
+    row.a_neutral = b.neutral;
+  }
+  for (const b of bComments) {
+    const row = ensure(b.window_end);
+    row.b_positive = b.positive;
+    row.b_negative = b.negative;
+    row.b_neutral = b.neutral;
+  }
+
+  let map = supplementFromWindows([...rows.values()], aWindows, bucketSeconds, "a");
+  map = supplementFromWindows([...map.values()], bWindows, bucketSeconds, "b");
+  for (const row of map.values()) rows.set(row.t, row);
+
+  for (const p of aWindows) {
+    const t = Math.floor(p.window_end / bucketSeconds) * bucketSeconds;
+    const row = ensure(t);
+    row[keywordA] = Math.round(p.positive_ratio * 100);
+  }
+  for (const p of bWindows) {
+    const t = Math.floor(p.window_end / bucketSeconds) * bucketSeconds;
+    const row = ensure(t);
+    row[keywordB] = Math.round(p.positive_ratio * 100);
+  }
+
+  return [...rows.values()].sort((x, y) => x.t - y.t);
+}

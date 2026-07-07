@@ -110,8 +110,6 @@ export default function SentimentTab({ sel, setSel }) {
   const [a, b] = active || ["", ""];
   const seriesA = state.windows[a] || [];
   const seriesB = state.windows[b] || [];
-  const chartSeriesA = bucketPoints(seriesA, bucketSeconds);
-  const chartSeriesB = bucketPoints(seriesB, bucketSeconds);
 
   // When a time range is selected via drag, narrow the stat cards and comment
   // feed to it; the chart itself always sees the full series (it just zooms).
@@ -176,8 +174,10 @@ export default function SentimentTab({ sel, setSel }) {
               <SentimentChart
                 a={a}
                 b={b}
-                seriesA={chartSeriesA}
-                seriesB={chartSeriesB}
+                seriesA={seriesA}
+                seriesB={seriesB}
+                comments={state.comments}
+                bucketSeconds={bucketSeconds}
                 range={range}
                 onRangeChange={setRange}
               />

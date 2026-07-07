@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { bucketPoints } from "./aggregate.js";
+import {
+  bucketPoints,
+  bucketCommentsBySentiment,
+  buildSentimentChartRows,
+} from "./aggregate.js";
 
 const pt = (end, ratio, count) => ({
   window_end: end,
@@ -46,5 +50,58 @@ describe("bucketPoints", () => {
     const bucketed = bucketPoints(points, 300);
     expect(bucketed[0].positive_ratio).toBe(1);
     expect(bucketed[0].comment_count).toBe(0);
+  });
+});
+
+describe("bucketCommentsBySentiment", () => {
+  const comment = (utc, kw, label) => ({
+    created_utc: utc,
+    matched_keywords: [kw],
+    sentiment_label: label,
+  });
+
+  it("counts labels per keyword and bucket", () => {
+    const rows = bucketCommentsBySentiment(
+      [
+        comment(65, "apple", "positive"),
+        comment(70, "apple", "negative"),
+        comment(80, "android", "positive"),
+      ],
+      "apple",
+      60,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].window_end).toBe(60);
+    expect(rows[0]).toMatchObject({ positive: 1, negative: 1, neutral: 0 });
+  });
+});
+
+describe("buildSentimentChartRows", () => {
+  it("merges comment bars and window lines", () => {
+    const comments = [
+      {
+        created_utc: 65,
+        matched_keywords: ["apple"],
+        sentiment_label: "positive",
+      },
+      {
+        created_utc: 66,
+        matched_keywords: ["apple"],
+        sentiment_label: "negative",
+      },
+    ];
+    const seriesA = [{ window_end: 60, positive_ratio: 0.5, comment_count: 2 }];
+    const rows = buildSentimentChartRows(
+      comments,
+      seriesA,
+      [],
+      "apple",
+      "android",
+      60,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].a_positive).toBe(1);
+    expect(rows[0].a_negative).toBe(1);
+    expect(rows[0].apple).toBe(50);
   });
 });
