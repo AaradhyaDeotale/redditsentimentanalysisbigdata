@@ -16,27 +16,48 @@ const fmtTime = (s) =>
     second: "2-digit",
   });
 
-// Align the two per-keyword series by window_end into the single row-per-time
-// shape Recharts expects. Real windows share window boundaries, so timestamps
-// line up across keywords.
-function buildChartData(a, b, seriesA, seriesB) {
+// One color family per compared keyword (blue for the first, orange for the
+// second - same hues as before), with a couple of extra shades so an
+// ambiguous keyword's senses (e.g. "apple (company)" vs "apple (fruit)")
+// render as multiple lines that still read as belonging to the same keyword.
+const PALETTE_A = ["#58a6ff", "#79c0ff", "#1f6feb"];
+const PALETTE_B = ["#f0883e", "#ffa657", "#c9622b"];
+
+const labelFor = (s) => (s.sense ? `${s.base} (${s.sense})` : s.base);
+
+// Attach a display label + color to each of a keyword's sense series.
+function styledSeries(namedSeries, palette) {
+  return namedSeries.map((s, i) => ({
+    ...s,
+    label: labelFor(s),
+    color: palette[i % palette.length],
+  }));
+}
+
+// Align every series by window_end into the single row-per-time shape
+// Recharts expects. Real windows share window boundaries, so timestamps
+// line up across keywords (and across a keyword's senses).
+function buildChartData(series) {
   const rows = new Map();
-  for (const p of seriesA) {
-    rows.set(p.window_end, {
-      t: p.window_end,
-      [a]: Math.round(p.positive_ratio * 100),
-    });
-  }
-  for (const p of seriesB) {
-    const row = rows.get(p.window_end) || { t: p.window_end };
-    row[b] = Math.round(p.positive_ratio * 100);
-    rows.set(p.window_end, row);
+  for (const s of series) {
+    for (const p of s.points) {
+      const row = rows.get(p.window_end) || { t: p.window_end };
+      row[s.key] = Math.round(p.positive_ratio * 100);
+      rows.set(p.window_end, row);
+    }
   }
   return [...rows.values()].sort((x, y) => x.t - y.t);
 }
 
-export default function SentimentChart({ a, b, seriesA, seriesB }) {
-  const data = buildChartData(a, b, seriesA, seriesB);
+// seriesA/seriesB: arrays of {key, base, sense, points} from
+// lib/messages.js#seriesForBase - one entry per sense the keyword has
+// resolved into so far (or a single plain entry for an unambiguous keyword).
+export default function SentimentChart({ seriesA, seriesB }) {
+  const series = [
+    ...styledSeries(seriesA, PALETTE_A),
+    ...styledSeries(seriesB, PALETTE_B),
+  ];
+  const data = buildChartData(series);
   return (
     <div className="h-72 w-full rounded-xl border border-edge bg-card p-4">
       <ResponsiveContainer width="100%" height="100%">
@@ -68,22 +89,18 @@ export default function SentimentChart({ a, b, seriesA, seriesB }) {
           <Legend />
           {/* isAnimationActive={false} is the flicker fix: no entry re-animation
               on every append, so the line grows instead of sweeping in again. */}
-          <Line
-            type="monotone"
-            dataKey={a}
-            stroke="#58a6ff"
-            dot={false}
-            isAnimationActive={false}
-            connectNulls
-          />
-          <Line
-            type="monotone"
-            dataKey={b}
-            stroke="#f0883e"
-            dot={false}
-            isAnimationActive={false}
-            connectNulls
-          />
+          {series.map((s) => (
+            <Line
+              key={s.key}
+              type="monotone"
+              dataKey={s.key}
+              name={s.label}
+              stroke={s.color}
+              dot={false}
+              isAnimationActive={false}
+              connectNulls
+            />
+          ))}
         </LineChart>
       </ResponsiveContainer>
     </div>
