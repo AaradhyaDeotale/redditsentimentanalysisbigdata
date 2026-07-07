@@ -20,12 +20,24 @@ log = logging.getLogger("flink_job.sentiment_window")
 
 
 def fanout_record(record: dict) -> list[dict]:
-    """One item per matched keyword for a scored record (empty if unscored)."""
+    """One item per matched keyword for a scored record (empty if unscored).
+
+    Keywords with a resolved sense (record["keyword_senses"]) fan out under a
+    sense-qualified key "keyword:sense" (e.g. "apple:company"); keywords
+    without a sense entry keep their plain key. Every item also carries
+    "base_keyword" so downstream consumers can group across senses.
+    """
     label = record.get("sentiment_label")
     if not label:
         return []
     keywords = record.get("matched_keywords") or []
-    return [{"keyword": kw, "sentiment_label": label} for kw in keywords]
+    senses = record.get("keyword_senses") or {}
+    out = []
+    for kw in keywords:
+        sense = senses.get(kw)
+        key = f"{kw}:{sense}" if sense else kw
+        out.append({"keyword": key, "base_keyword": kw, "sentiment_label": label})
+    return out
 
 
 try:
