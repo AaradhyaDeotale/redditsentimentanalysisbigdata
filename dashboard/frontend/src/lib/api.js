@@ -56,6 +56,13 @@ export const removeKeyword = (keyword) =>
     return res.json();
   });
 
+// Sketch analytics (P1): Count-Min trending tokens.
+// (HyperLogLog reach lives at /api/reach - kept server-side for the P1
+// deliverable, but the UI panel was removed, so there is no fetch helper.)
+// `keyword`: one keyword to scope to, or nothing to merge all tracked ones.
+export const getTrending = (keyword) =>
+  getJSON(keyword ? `/api/trending?keyword=${q(keyword)}` : "/api/trending");
+
 export const getKafkaOverview = () => getJSON("/api/kafka/overview");
 export const getKafkaTopics = () => getJSON("/api/kafka/topics");
 export const getKafkaGroups = () => getJSON("/api/kafka/groups");

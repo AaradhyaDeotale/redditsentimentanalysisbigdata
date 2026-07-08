@@ -3,12 +3,14 @@ import { getMeta } from "./lib/api.js";
 import Tabs from "./components/Tabs.jsx";
 import StatusBadge from "./components/StatusBadge.jsx";
 import SentimentTab from "./tabs/SentimentTab.jsx";
+import TrendsTab from "./tabs/TrendsTab.jsx";
 import KafkaTab from "./tabs/KafkaTab.jsx";
 import FlinkTab from "./tabs/FlinkTab.jsx";
 import OverviewTab from "./tabs/OverviewTab.jsx";
 
 const TABS = [
   { id: "sentiment", label: "Sentiment" },
+  { id: "trends", label: "Trends" },
   { id: "kafka", label: "Kafka" },
   { id: "flink", label: "Flink" },
   { id: "overview", label: "Pipeline" },
@@ -46,6 +48,7 @@ export default function App() {
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-6">
         {tab === "sentiment" && <SentimentTab sel={sel} setSel={setSel} />}
+        {tab === "trends" && <TrendsTab compared={sel.active} />}
         {tab === "kafka" && <KafkaTab />}
         {tab === "flink" && <FlinkTab />}
         {tab === "overview" && <OverviewTab meta={meta} />}

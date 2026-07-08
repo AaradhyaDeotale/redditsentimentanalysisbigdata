@@ -134,10 +134,17 @@ export default function ControlPanel() {
             onClick={() => call(resetOffset)}
             disabled={prod.running || busy}
             className="rounded border border-edge px-2 py-1 hover:text-text disabled:opacity-40"
+            title="Replaying an already-streamed slice is LATE data for the event-time windows — reset the pipeline first to re-window it"
           >
             ↺ reset offset
           </button>
         </div>
+
+        {prod.replay_warning && (
+          <div className="mt-3 rounded-lg border border-neg/40 bg-neg/10 px-3 py-2 text-xs text-neg">
+            ⚠ {prod.replay_warning}
+          </div>
+        )}
 
         {prod.running && (
           <div className="mt-4">
