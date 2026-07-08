@@ -45,6 +45,11 @@ class CommentBuffer:
         with self._lock:
             return sorted(self._data.keys())
 
+    def clear(self) -> None:
+        """Empty the feed (pipeline reset wiped its backing topic)."""
+        with self._lock:
+            self._data.clear()
+
 
 # Shared instance used by the consumer, the WebSocket hub, and the REST API.
 comment_buffer = CommentBuffer()

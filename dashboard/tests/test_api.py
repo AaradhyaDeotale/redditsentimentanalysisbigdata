@@ -66,6 +66,164 @@ def test_timeseries_groups_sense_qualified_keys_under_base():
         )
 
 
+def test_trending_and_reach_endpoints():
+    """The sketch analytics endpoints serve mock trending + reach records."""
+    with TestClient(app) as client:
+        time.sleep(3)  # let the mock producer publish at least one round
+        res = client.get("/api/trending")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["type"] == "trending"
+        assert len(body["items"]) >= 1
+        assert {"token", "count", "keywords", "momentum"} <= set(body["items"][0])
+        # scoped to the tracked set: every item comes from a tracked keyword
+        tracked = set(client.get("/api/keywords").json()["keywords"])
+        for item in body["items"]:
+            assert set(item["keywords"]) <= tracked
+        # items arrive ranked by estimated count
+        counts = [i["count"] for i in body["items"]]
+        assert counts == sorted(counts, reverse=True)
+
+        res = client.get("/api/reach")
+        assert res.status_code == 200
+        keywords = res.json()["keywords"]
+        assert len(keywords) >= 1
+        for field in ("keyword", "unique_authors", "comment_count", "window_end"):
+            assert field in keywords[0]
+
+        res = client.get("/api/reach?keyword=apple")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["keyword"] == "apple"
+        assert len(body["points"]) >= 1
+
+
+def test_parse_rejects_malformed_analytics():
+    from src.consumer import _parse_analytics
+    assert _parse_analytics(b"not json") is None
+    assert _parse_analytics(b'{"type":"unknown"}') is None
+    assert _parse_analytics(b'{"type":"reach"}') is None  # keyword required
+    # legacy global trending records (pre-keyword schema) are dropped too
+    assert _parse_analytics(b'{"type":"trending","items":[]}') is None
+    good = _parse_analytics(b'{"type":"reach","keyword":"apple",'
+                            b'"window_end":1554080400,"unique_authors":1200}')
+    assert good["keyword"] == "apple"
+    assert good["unique_authors"] == 1200
+    # late_drop records are keyword-less by design and must pass through
+    late = _parse_analytics(b'{"type":"late_drop","pipeline":"trending",'
+                            b'"count":42,"emitted_at":1751900000}')
+    assert late["count"] == 42
+
+
+def test_late_drop_counts_accumulate_and_clear():
+    """Late-drop records power the stale-replay warning: counts accumulate
+    per pipeline, and a pipeline reset clears them."""
+    from src.analytics_store import AnalyticsStore
+
+    store = AnalyticsStore()
+    assert store.late_status() == {"total": 0, "last_at": None, "by_pipeline": {}}
+
+    store.add({"type": "late_drop", "pipeline": "trending",
+               "count": 30, "emitted_at": 100})
+    store.add({"type": "late_drop", "pipeline": "trending",
+               "count": 12, "emitted_at": 200})
+    store.add({"type": "late_drop", "pipeline": "reach",
+               "count": 5, "emitted_at": 150})
+
+    status = store.late_status()
+    assert status["total"] == 47
+    assert status["last_at"] == 200
+    assert status["by_pipeline"]["trending"] == {"count": 42, "last_at": 200}
+
+    # late records never pollute the keyword-scoped stores
+    assert store.trending_overview(None)["items"] == []
+    assert store.reach_latest() == []
+
+    store.clear_late()
+    assert store.late_status()["total"] == 0
+
+    # full clear (pipeline reset): trending/reach views empty out too
+    store.add(_trending_record("apple", 100, {"battery life": 50}))
+    store.add({"type": "late_drop", "pipeline": "reach",
+               "count": 1, "emitted_at": 300})
+    store.clear()
+    assert store.trending_overview(None)["items"] == []
+    assert store.late_status()["total"] == 0
+
+
+def _trending_record(keyword, window_end, counts):
+    return {
+        "type": "trending", "keyword": keyword,
+        "window_start": window_end - 60, "window_end": window_end,
+        "items": [{"token": t, "count": c} for t, c in counts.items()],
+        "sketch": {"kind": "count-min", "width": 2048, "depth": 4,
+                   "stream_total": sum(counts.values())},
+    }
+
+
+def test_trending_overview_follows_tracked_set_and_momentum():
+    """The overview merges only tracked keywords and tags window-over-window
+    momentum - the two behaviours the Trends panel is built on."""
+    from src.analytics_store import AnalyticsStore
+
+    store = AnalyticsStore()
+    store.add(_trending_record("apple", 100, {"battery life": 50, "lawsuit": 30}))
+    store.add(_trending_record("apple", 200, {"battery life": 90, "leak": 40}))
+    store.add(_trending_record("tesla", 200, {"battery life": 10}))
+
+    view = store.trending_overview({"apple", "tesla"})
+    assert view["keywords"] == ["apple", "tesla"]
+    items = {i["token"]: i for i in view["items"]}
+    # shared term sums across keywords
+    assert items["battery life"]["count"] == 100
+    assert items["battery life"]["keywords"] == ["apple", "tesla"]
+    assert items["battery life"]["momentum"] == "up"       # 50 -> 100
+    assert items["leak"]["momentum"] == "new"              # absent last window
+    assert "lawsuit" not in items                          # fell out of top-k
+
+    # untracking a keyword removes its trends immediately
+    view = store.trending_overview({"tesla"})
+    assert view["keywords"] == ["tesla"]
+    assert {i["token"] for i in view["items"]} == {"battery life"}
+    # tesla has only one window -> no history -> flat, not NEW
+    assert view["items"][0]["momentum"] == "flat"
+
+
+def test_momentum_ignores_keywords_without_history():
+    """A keyword's very first window must not inflate a shared term's
+    momentum: only keywords WITH a previous window enter the comparison."""
+    from src.analytics_store import AnalyticsStore
+
+    store = AnalyticsStore()
+    store.add(_trending_record("apple", 100, {"watch": 40}))
+    store.add(_trending_record("apple", 200, {"watch": 44}))   # ~flat for apple
+    store.add(_trending_record("tesla", 200, {"watch": 100}))  # tesla's FIRST window
+
+    view = store.trending_overview({"apple", "tesla"})
+    item = {i["token"]: i for i in view["items"]}["watch"]
+    assert item["count"] == 144           # merged current count still sums all
+    assert item["momentum"] == "flat"     # 40 -> 44, not 40 -> 144 ("up 260%")
+
+
+def test_reach_replaces_reemitted_window():
+    """Replaying a slice re-emits the same reach window; it must replace,
+    not duplicate, the stored point (same rule as trending)."""
+    from src.analytics_store import AnalyticsStore
+
+    def reach(end, authors):
+        return {"type": "reach", "keyword": "apple", "window_start": end - 60,
+                "window_end": end, "unique_authors": authors, "comment_count": 5}
+
+    store = AnalyticsStore()
+    store.add(reach(100, 10))
+    store.add(reach(160, 20))
+    store.add(reach(100, 12))  # re-emitted first window
+
+    series = store.reach_series("apple")
+    assert [p["window_end"] for p in series] == [100, 160]
+    assert series[0]["unique_authors"] == 12  # replaced, not duplicated
+
+
 def test_parse_rejects_malformed_messages():
     """The Kafka message parser should reject bad input gracefully."""
     from src.consumer import _parse

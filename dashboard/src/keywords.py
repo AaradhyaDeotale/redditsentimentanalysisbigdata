@@ -36,27 +36,33 @@ def normalize(raw: str) -> str | None:
     return kw
 
 
+def connect_redis(url: str = REDIS_URL):
+    """decode_responses Redis client, or None if unreachable.
+
+    Shared by the keyword registry and the control panel's replay-cursor
+    persistence so connection settings live in one place.
+    """
+    try:
+        import redis
+
+        client = redis.from_url(
+            url,
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        client.ping()
+        return client
+    except Exception:  # noqa: BLE001 - caller runs degraded without Redis
+        return None
+
+
 class KeywordRegistry:
     def __init__(self):
         self._lock = threading.Lock()
         self._fallback: set[str] = set()  # used only when Redis is down
-        self._redis = self._connect()
+        self._redis = connect_redis()
         self._seed_defaults()
-
-    def _connect(self):
-        try:
-            import redis
-
-            client = redis.from_url(
-                REDIS_URL,
-                decode_responses=True,
-                socket_connect_timeout=1,
-                socket_timeout=1,
-            )
-            client.ping()
-            return client
-        except Exception:  # noqa: BLE001 - run degraded, in-memory only
-            return None
 
     def _seed_defaults(self) -> None:
         seeds = {normalize(k) for k in _DEFAULTS.split(",")}
