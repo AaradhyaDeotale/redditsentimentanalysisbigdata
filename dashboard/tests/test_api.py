@@ -83,6 +83,11 @@ def test_trending_and_reach_endpoints():
         # items arrive ranked by estimated count
         counts = [i["count"] for i in body["items"]]
         assert counts == sorted(counts, reverse=True)
+        # chart data rides along: top terms across the stored windows
+        assert {"windows", "series"} <= set(body["history"])
+        if body["history"]["series"]:
+            first = body["history"]["series"][0]
+            assert len(first["points"]) == len(body["history"]["windows"])
 
         res = client.get("/api/reach")
         assert res.status_code == 200
@@ -96,6 +101,62 @@ def test_trending_and_reach_endpoints():
         body = res.json()
         assert body["keyword"] == "apple"
         assert len(body["points"]) >= 1
+
+
+def test_comment_matching_is_word_bounded_and_newest_first():
+    """`matching` backs the Trends tab's example comments: whole words only
+    (no "ios" inside "curiosity"), phrases tolerate punctuation between their
+    words, and the newest matches win."""
+    from src.comment_store import CommentBuffer
+
+    buf = CommentBuffer(maxlen=10)
+    mk = lambda cid, body: {"id": cid, "body": body,  # noqa: E731
+                            "matched_keywords": ["apple"]}
+    buf.add(mk("c1", "my curiosity got the better of me"))
+    buf.add(mk("c2", "iOS is fine but the battery-life is rough"))
+    buf.add(mk("c3", "Battery life got so much worse lately"))
+    buf.add(mk("c4", "unrelated comment about pears"))
+
+    assert [c["id"] for c in buf.matching("apple", "ios")] == ["c2"]
+    # phrase matches across "-" and case; newest first
+    hits = [c["id"] for c in buf.matching("apple", "battery life")]
+    assert hits == ["c3", "c2"]
+    # exclusion lets one comment illustrate only one term
+    assert [c["id"] for c in buf.matching("apple", "battery life",
+                                          exclude_ids={"c3"})] == ["c2"]
+    assert buf.matching("apple", "banana") == []
+    assert buf.matching("unknown", "ios") == []
+
+
+def test_snippet_centers_on_the_term():
+    from src.comment_store import snippet_around
+
+    long_head = "word " * 100
+    body = long_head + "the battery life is rough" + " tail" * 100
+    snip = snippet_around(body, "battery life", radius=30)
+    assert "battery life" in snip
+    assert snip.startswith("…") and snip.endswith("…")
+    assert len(snip) < 120
+    # short bodies come back whole, no ellipses
+    assert snippet_around("love the battery life", "battery life") == \
+        "love the battery life"
+
+
+def test_trending_examples_endpoint():
+    """/api/trending/examples: top terms with real comment snippets."""
+    with TestClient(app) as client:
+        time.sleep(3)  # let the mock producer publish comments + windows
+        res = client.get("/api/trending/examples")
+        assert res.status_code == 200
+        body = res.json()
+        assert len(body["terms"]) >= 1
+        for term in body["terms"]:
+            assert {"token", "count", "keywords", "comments"} <= set(term)
+            for c in term["comments"]:
+                assert {"id", "author", "body", "sentiment_label"} <= set(c)
+        # a comment id never illustrates two different terms
+        ids = [c["id"] for t in body["terms"] for c in t["comments"]]
+        assert len(ids) == len(set(ids))
 
 
 def test_parse_rejects_malformed_analytics():
@@ -187,6 +248,60 @@ def test_trending_overview_follows_tracked_set_and_momentum():
     assert {i["token"] for i in view["items"]} == {"battery life"}
     # tesla has only one window -> no history -> flat, not NEW
     assert view["items"][0]["momentum"] == "flat"
+
+
+def test_trending_history_tracks_top_terms_across_windows():
+    """The Trends chart data: top terms of the LATEST window, with their
+    counts in every stored window (None where a term was below a window's
+    stored cutoff - the sketch only ships each window's heaviest terms)."""
+    from src.analytics_store import AnalyticsStore
+
+    store = AnalyticsStore()
+    assert store.trending_history(None) == {"windows": [], "series": []}
+
+    store.add(_trending_record("apple", 100, {"battery life": 50, "lawsuit": 30}))
+    store.add(_trending_record("apple", 200, {"battery life": 90, "leak": 40}))
+    store.add(_trending_record("tesla", 200, {"battery life": 10}))
+
+    hist = store.trending_history({"apple", "tesla"})
+    assert hist["windows"] == [100, 200]
+    by_token = {s["token"]: s["points"] for s in hist["series"]}
+    # terms come from the latest merged window, counts summed across keywords
+    assert by_token["battery life"] == [50, 100]
+    assert by_token["leak"] == [None, 40]      # below window-100's cutoff
+    assert "lawsuit" not in by_token           # not in the latest window
+    # ranked by latest-window count, biggest first (matches the list order)
+    assert [s["token"] for s in hist["series"]] == ["battery life", "leak"]
+
+    # scoping follows the tracked set, like the overview
+    hist = store.trending_history({"tesla"})
+    assert hist["windows"] == [200]
+    assert [s["token"] for s in hist["series"]] == ["battery life"]
+    assert hist["series"][0]["points"] == [10]
+
+    # top_k caps the series count
+    store.add(_trending_record("apple", 300,
+                               {f"term {i}": 10 + i for i in range(8)}))
+    assert len(store.trending_history({"apple"}, top_k=5)["series"]) == 5
+
+
+def test_overview_ranks_by_score_with_count_fallback():
+    """Items rank by score (count x distinctiveness, computed in Flink);
+    records predating the scoring change carry no score and fall back to
+    their raw count, so mixed topics still sort sensibly."""
+    from src.analytics_store import AnalyticsStore
+
+    store = AnalyticsStore()
+    rec = _trending_record("apple", 100, {})
+    rec["items"] = [
+        {"token": "already", "count": 5, "score": 9.8},
+        {"token": "cranberry", "count": 3, "score": 13.0},
+        {"token": "legacy term", "count": 11},  # pre-scoring record shape
+    ]
+    store.add(rec)
+    view = store.trending_overview({"apple"})
+    assert [i["token"] for i in view["items"]] == [
+        "cranberry", "legacy term", "already"]  # 13.0 > 11 (count) > 9.8
 
 
 def test_momentum_ignores_keywords_without_history():

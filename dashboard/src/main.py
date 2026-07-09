@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import control, flink_proxy, kafka_admin
 from .analytics_store import analytics_store
-from .comment_store import comment_buffer
+from .comment_store import comment_buffer, snippet_around
 from .consumer import data_mode, set_sinks, start_background_consumer
 from .keywords import registry as keyword_registry
 from .store import store
@@ -181,7 +181,60 @@ def trending(keyword: str | None = Query(None, min_length=1)):
         scope = {k.strip().lower() for k in keyword.split(",") if k.strip()}
     overview = analytics_store.trending_overview(scope)
     overview["late_drops"] = analytics_store.late_status()
+    # Top-terms-over-time series for the Trends chart (last few windows).
+    overview["history"] = analytics_store.trending_history(scope)
     return overview
+
+
+@app.get("/api/trending/examples")
+def trending_examples(
+    keyword: str | None = Query(None, min_length=1),
+    terms: int = Query(3, ge=1, le=10),
+    per_term: int = Query(2, ge=1, le=5),
+):
+    """Real comments behind the top trending terms (the human evidence).
+
+    The Count-Min sketch keeps counts, not examples - but the live-feed
+    buffer still holds the recent real comments, so the ones mentioning a
+    top term ARE what people are actually saying. Takes the top `terms`
+    terms of the scoped trending view (same `keyword` semantics as
+    /api/trending) and attaches up to `per_term` recent comments each,
+    snippeted around the term. A comment never illustrates two terms.
+    """
+    if keyword is None:
+        scope = set(keyword_registry.list())
+    else:
+        scope = {k.strip().lower() for k in keyword.split(",") if k.strip()}
+    overview = analytics_store.trending_overview(scope)
+
+    used_ids: set[str] = set()
+    result = []
+    for item in overview["items"][:terms]:
+        comments = []
+        for kw in item["keywords"]:
+            for c in comment_buffer.matching(
+                kw, item["token"], limit=per_term - len(comments),
+                exclude_ids=used_ids,
+            ):
+                used_ids.add(c.get("id"))
+                comments.append({
+                    "id": c.get("id"),
+                    "author": c.get("author"),
+                    "body": snippet_around(c.get("body"), item["token"]),
+                    "sentiment_label": c.get("sentiment_label"),
+                    "sentiment_score": c.get("sentiment_score"),
+                    "created_utc": c.get("created_utc"),
+                })
+            if len(comments) >= per_term:
+                break
+        result.append({
+            "token": item["token"],
+            "count": item["count"],
+            "score": item.get("score"),
+            "keywords": item["keywords"],
+            "comments": comments,
+        })
+    return {"window_end": overview.get("window_end"), "terms": result}
 
 
 @app.get("/api/reach")
