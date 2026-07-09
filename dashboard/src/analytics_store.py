@@ -113,10 +113,14 @@ class AnalyticsStore:
             sketch = sketch or sk
             for item in latest.get("items", []):
                 entry = merged.setdefault(item["token"], {
-                    "count": 0, "keywords": [], "prev": 0, "cur_hist": 0,
-                    "has_history": False,
+                    "count": 0, "score": 0.0, "keywords": [], "prev": 0,
+                    "cur_hist": 0, "has_history": False,
                 })
                 entry["count"] += item["count"]
+                # score = count x distinctiveness (computed by the Flink
+                # job); records from before the scoring change carry no
+                # score, so fall back to the raw count.
+                entry["score"] += item.get("score", item["count"])
                 entry["keywords"].append(kw)
                 if prev is not None:
                     # Momentum must compare like with like: only keywords
@@ -133,11 +137,12 @@ class AnalyticsStore:
             items.append({
                 "token": token,
                 "count": entry["count"],
+                "score": round(entry["score"], 2),
                 "keywords": sorted(entry["keywords"]),
                 "momentum": momentum,
                 "change": change,
             })
-        items.sort(key=lambda i: (-i["count"], i["token"]))
+        items.sort(key=lambda i: (-i["score"], i["token"]))
 
         if sketch:
             sketch = {**sketch, "stream_total": stream_total}
@@ -147,6 +152,54 @@ class AnalyticsStore:
             "keywords": sorted(series_by_kw),
             "items": items[:top_k],
             "sketch": sketch,
+        }
+
+    def trending_history(self, tracked: set[str] | None = None,
+                         top_k: int = 5) -> dict:
+        """Per-window counts for the latest window's top terms.
+
+        Merges the stored windows across the scoped keywords (summing counts
+        for terms shared between keywords, like `trending_overview`), picks
+        the top_k terms of the LATEST merged window, and returns each term's
+        count in every stored window. A term absent from a window's stored
+        top list gets None, not 0 - the sketch only ships each window's
+        heaviest terms, so absence means "below that window's cutoff".
+        """
+        tracked = {k.lower() for k in tracked} if tracked is not None else None
+        with self._lock:
+            series_list = [
+                list(series) for kw, series in self._trending.items()
+                if series and (tracked is None or kw in tracked)
+            ]
+
+        # window_end -> token -> [count, score]; the chart PLOTS counts, but
+        # its terms are CHOSEN by score, matching the ranked list's order.
+        windows: dict[int, dict[str, list[float]]] = {}
+        for series in series_list:
+            for record in series:
+                end = record.get("window_end")
+                if end is None:
+                    continue
+                counts = windows.setdefault(end, {})
+                for item in record.get("items", []):
+                    entry = counts.setdefault(item["token"], [0, 0.0])
+                    entry[0] += item["count"]
+                    entry[1] += item.get("score", item["count"])
+        if not windows:
+            return {"windows": [], "series": []}
+
+        ends = sorted(windows)
+        latest = windows[ends[-1]]
+        top = sorted(latest.items(), key=lambda kv: (-kv[1][1], kv[0]))[:top_k]
+        return {
+            "windows": ends,
+            "series": [
+                {"token": token,
+                 "points": [
+                     (windows[end].get(token) or [None])[0] for end in ends
+                 ]}
+                for token, _ in top
+            ],
         }
 
     def reach_latest(self) -> list[dict]:
