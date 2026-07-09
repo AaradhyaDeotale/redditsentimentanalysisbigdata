@@ -29,6 +29,7 @@ import threading
 import time
 from pathlib import Path
 
+from . import consumer as consumer_mod
 from .analytics_store import analytics_store
 from .comment_store import comment_buffer
 from .keywords import connect_redis
@@ -311,6 +312,10 @@ class PipelineController:
             analytics_store.clear()
             store.clear()
             comment_buffer.clear()
+            # The recreated topics have new Kafka topic ids; live consumers
+            # do not follow a name across ids and would poll dead handles
+            # forever. Tell the loops to rebuild their Consumers.
+            consumer_mod.bump_topic_generation()
             self._say("Done - Flink restarting, job submits in ~25s.")
             self._state = "done"
         except Exception as e:  # noqa: BLE001 - surface any failure to the UI

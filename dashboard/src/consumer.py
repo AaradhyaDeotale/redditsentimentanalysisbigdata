@@ -48,6 +48,23 @@ def data_mode() -> str:
     return "mock" if USE_MOCK else "live"
 
 
+# --- topic-recreation signal ----------------------------------------------
+# The pipeline reset DELETES and recreates the Kafka topics. Kafka gives the
+# new topics fresh internal ids, and a live rdkafka consumer does not follow
+# a topic name across ids - it logs "partition count changed from 1 to 0"
+# and then polls a dead handle forever, so the dashboard silently stops
+# receiving data. The reset bumps this generation after recreating the
+# topics; each consumer loop notices on its next poll tick and rebuilds its
+# Consumer against the new topics.
+_topic_generation = 0
+
+
+def bump_topic_generation() -> None:
+    """Tell the consumer loops the topics were just deleted + recreated."""
+    global _topic_generation
+    _topic_generation += 1
+
+
 # --- live broadcast sinks -------------------------------------------------
 # main.py injects WebSocket-broadcast callbacks here at startup. They default
 # to no-ops so the consumer (and its tests) run without the websocket layer.
@@ -180,8 +197,15 @@ def _run_real_consumer() -> None:
     consumer.subscribe([topic])
     print(f"[consumer] subscribed to '{topic}' (full replay, group {conf['group.id']})")
 
+    generation = _topic_generation
     try:
         while True:
+            if generation != _topic_generation:  # topics recreated (reset)
+                generation = _topic_generation
+                consumer.close()
+                consumer = Consumer(conf)
+                consumer.subscribe([topic])
+                print(f"[consumer] topics recreated - resubscribed to '{topic}'")
             msg = consumer.poll(1.0)
             if msg is None:
                 continue
@@ -239,8 +263,15 @@ def _run_analytics_consumer() -> None:
     consumer.subscribe([topic])
     print(f"[consumer] subscribed to '{topic}' (full replay, group {conf['group.id']})")
 
+    generation = _topic_generation
     try:
         while True:
+            if generation != _topic_generation:  # topics recreated (reset)
+                generation = _topic_generation
+                consumer.close()
+                consumer = Consumer(conf)
+                consumer.subscribe([topic])
+                print(f"[consumer] topics recreated - resubscribed to '{topic}'")
             msg = consumer.poll(1.0)
             if msg is None:
                 continue
@@ -274,8 +305,15 @@ def _run_cleaned_consumer() -> None:
     consumer.subscribe([topic])
     print(f"[consumer] subscribed to '{topic}' on {conf['bootstrap.servers']}")
 
+    generation = _topic_generation
     try:
         while True:
+            if generation != _topic_generation:  # topics recreated (reset)
+                generation = _topic_generation
+                consumer.close()
+                consumer = Consumer(conf)
+                consumer.subscribe([topic])
+                print(f"[consumer] topics recreated - resubscribed to '{topic}'")
             msg = consumer.poll(1.0)
             if msg is None:
                 continue
@@ -310,6 +348,15 @@ _MOCK_BODIES = [
 _MOCK_AUTHORS = ["redditor42", "throwaway99", "tech_fan", "daily_user",
                  "skeptic", "early_adopter", "lurker_no_more"]
 
+# Bodies that NAME a trending term, so the Trends tab's example comments
+# (/api/trending/examples) find matches in mock mode too.
+_MOCK_TERM_BODIES = [
+    "the {term} is all anyone talks about lately",
+    "honestly this {term} drama is completely overblown",
+    "after that {term} I'm seriously thinking of switching",
+    "did everyone see the {term}? absolutely wild week",
+]
+
 
 def _mock_comment(keyword: str, cid: int) -> dict:
     label = random.choices(
@@ -320,11 +367,16 @@ def _mock_comment(keyword: str, cid: int) -> dict:
         "negative": random.uniform(-0.95, -0.2),
         "neutral": random.uniform(-0.15, 0.15),
     }[label]
+    if random.random() < 0.5:  # half the feed mentions a trending term
+        body = random.choice(_MOCK_TERM_BODIES).format(
+            term=random.choice(_MOCK_TREND_TERMS))
+    else:
+        body = random.choice(_MOCK_BODIES)
     comment = {
         "id": f"mock-{cid}",
         "author": random.choice(_MOCK_AUTHORS),
         "created_utc": int(time.time()),
-        "body": random.choice(_MOCK_BODIES),
+        "body": body,
         "matched_keywords": [keyword],
         "sentiment_label": label,
         "sentiment_score": round(score, 3),
