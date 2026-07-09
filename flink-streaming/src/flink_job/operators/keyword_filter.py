@@ -21,10 +21,14 @@ import re
 import time
 from typing import Any
 
+from config.settings import parse_subkeywords
+from flink_job.operators.disambiguation import AMBIGUOUS_KEYWORDS, resolve_sense
+
 log = logging.getLogger("flink_job.keyword_filter")
 
 KEYWORD_REDIS_KEY = os.getenv("KEYWORD_REDIS_KEY", "flink:keywords")
 KEYWORD_REFRESH_SEC = float(os.getenv("KEYWORD_REFRESH_SEC", "5"))
+DEFAULT_W2V_MODEL_PATH = "/models/word2vec_subset/word2vec.model"
 
 
 def _compile_keyword_patterns(keywords: list[str]) -> dict[str, re.Pattern]:
@@ -43,6 +47,33 @@ def load_keywords_from_env() -> list[str]:
     if not raw:
         return []
     return [kw.strip() for kw in raw.split(",") if kw.strip()]
+
+
+def load_subkeywords_from_env() -> dict[str, list[str]]:
+    return parse_subkeywords(os.getenv("SUBKEYWORDS", ""))
+
+
+def load_w2v_resolver(model_path: str | None = None):
+    """Load a W2VSenseResolver from disk, or return None on any failure.
+
+    Never raises: the caller falls back to the hard-coded disambiguation
+    path (or "ambiguous") when the model isn't present or fails to load.
+    """
+    path = model_path or os.getenv("W2V_MODEL_PATH", DEFAULT_W2V_MODEL_PATH)
+    try:
+        from gensim.models import Word2Vec
+
+        from flink_job.preprocessing.w2v_sense_resolver import W2VSenseResolver
+
+        model = Word2Vec.load(path)
+        log.info("KeywordFilter: loaded W2V sense model from %s", path)
+        return W2VSenseResolver(model)
+    except Exception as exc:  # noqa: BLE001 - any failure means run without it
+        log.warning(
+            "KeywordFilter: W2V model unavailable at %s (%s), "
+            "falling back to hard-coded disambiguation", path, exc,
+        )
+        return None
 
 
 def _connect_redis():
@@ -66,30 +97,73 @@ def _connect_redis():
         return None
 
 
-def _do_map(record: dict[str, Any], patterns: dict) -> dict[str, Any]:
+def _do_map(
+    record: dict[str, Any],
+    patterns: dict,
+    subkeywords: dict[str, list[str]] | None = None,
+    resolver: Any | None = None,
+) -> dict[str, Any]:
     if not patterns:
-        return {**record, "matched_keywords": []}
+        return {**record, "matched_keywords": [], "keyword_senses": {}}
+    subkeywords = subkeywords or {}
     search_text = record.get("cleaned_body", "") or " ".join(record.get("tokens", []))
     matched = [kw for kw, pattern in patterns.items() if pattern.search(search_text)]
-    return {**record, "matched_keywords": matched}
+
+    senses: dict[str, str] = {}
+    for kw in matched:
+        kw_subkeywords = subkeywords.get(kw)
+        if kw_subkeywords:
+            if resolver is not None:
+                tokens = record.get("tokens", [])
+                senses[kw] = resolver.resolve(tokens, kw_subkeywords)
+            elif kw in AMBIGUOUS_KEYWORDS:
+                senses[kw] = resolve_sense(kw, search_text)
+            else:
+                senses[kw] = "ambiguous"
+        elif kw in AMBIGUOUS_KEYWORDS:
+            senses[kw] = resolve_sense(kw, search_text)
+
+    return {**record, "matched_keywords": matched, "keyword_senses": senses}
 
 
 try:
     from pyflink.datastream.functions import MapFunction
 
     class KeywordFilterFunction(MapFunction):
-        def __init__(self, keywords: list[str] | None = None):
+        def __init__(
+            self,
+            keywords: list[str] | None = None,
+            subkeywords: dict[str, list[str]] | None = None,
+            resolver: Any | None = None,
+        ):
             self._keywords_init = keywords
             self._patterns: dict[str, re.Pattern] = {}
             self._current: set[str] = set()
             self._redis = None
             self._last_refresh = 0.0
+            self._subkeywords_init = subkeywords
+            self._resolver_init = resolver
+            self._subkeywords: dict[str, list[str]] = {}
+            self._resolver: Any | None = None
 
         def open(self, runtime_context):
             self._redis = _connect_redis()
             initial = self._read_keywords()
             self._apply(initial)
             self._last_refresh = time.monotonic()
+
+            self._subkeywords = (
+                self._subkeywords_init
+                if self._subkeywords_init is not None
+                else load_subkeywords_from_env()
+            )
+            if self._resolver_init is not None:
+                self._resolver = self._resolver_init
+            elif self._subkeywords:
+                self._resolver = load_w2v_resolver()
+            else:
+                self._resolver = None
+
             log.info("KeywordFilter: initial keyword(s): %s", sorted(self._current))
 
         def _read_keywords(self) -> list[str]:
@@ -135,14 +209,21 @@ try:
 
         def map(self, record: dict[str, Any]) -> dict[str, Any]:
             self._maybe_refresh()
-            return _do_map(record, self._patterns)
+            return _do_map(record, self._patterns, self._subkeywords, self._resolver)
 
 except ImportError:
     # Running outside Flink (e.g. unit tests)
     class KeywordFilterFunction:
-        def __init__(self, keywords: list[str] | None = None):
+        def __init__(
+            self,
+            keywords: list[str] | None = None,
+            subkeywords: dict[str, list[str]] | None = None,
+            resolver: Any | None = None,
+        ):
             self._keywords_init = keywords or []
             self._patterns = _compile_keyword_patterns(self._keywords_init)
+            self._subkeywords = subkeywords or {}
+            self._resolver = resolver
 
         def map(self, record: dict[str, Any]) -> dict[str, Any]:
-            return _do_map(record, self._patterns)
+            return _do_map(record, self._patterns, self._subkeywords, self._resolver)

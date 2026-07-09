@@ -8,6 +8,9 @@ scikit-learn==1.4.2
 gensim==4.3.3
 joblib==1.4.2
 
+# --- Streaming .zst decompression for Word2Vec subset training script ---
+zstandard==0.22.0
+
 # --- Labelling (lexicon — used ONLY to generate training labels) ---
 vaderSentiment==3.3.2
 

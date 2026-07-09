@@ -6,6 +6,8 @@ import {
   initialState,
   MAX_COMMENTS,
   MAX_POINTS,
+  mergeSeries,
+  seriesForBase,
 } from "../lib/messages.js";
 import {
   AGGREGATION_OPTIONS,
@@ -25,6 +27,15 @@ const toPoints = (pts) =>
       comment_count: p.comment_count,
     }))
     .slice(-MAX_POINTS);
+
+// /api/compare (and /api/timeseries) group series by their literal, possibly
+// sense-qualified key under `senses` (see dashboard/src/main.py) - seed every
+// one of them into `windows` so seriesForBase can find them later.
+const toWindows = (senses) => {
+  const out = {};
+  for (const [key, pts] of Object.entries(senses || {})) out[key] = toPoints(pts);
+  return out;
+};
 
 export default function SentimentTab({ sel, setSel }) {
   // Selection (kw1/kw2/active) is owned by App so it survives tab switches.
@@ -81,8 +92,8 @@ export default function SentimentTab({ sel, setSel }) {
           .slice(0, MAX_COMMENTS);
         setState({
           windows: {
-            [a]: toPoints(cmp.keyword1.points),
-            [b]: toPoints(cmp.keyword2.points),
+            ...toWindows(cmp.keyword1.senses),
+            ...toWindows(cmp.keyword2.senses),
           },
           comments: merged,
         });
@@ -108,8 +119,14 @@ export default function SentimentTab({ sel, setSel }) {
   // keyword you removed from tracking is still viewable while its history lasts).
   const options = [...new Set([...tracked, ...(active || [])])].sort();
   const [a, b] = active || ["", ""];
-  const seriesA = state.windows[a] || [];
-  const seriesB = state.windows[b] || [];
+  // Ambiguous keywords resolve into one series per sense ("apple:company",
+  // "apple:fruit", ...); named* is that breakdown for the chart, while the
+  // card gets a single comment-count-weighted blend so its headline number
+  // still means "how is this keyword doing overall".
+  const namedA = seriesForBase(state.windows, a);
+  const namedB = seriesForBase(state.windows, b);
+  const seriesA = mergeSeries(namedA);
+  const seriesB = mergeSeries(namedB);
 
   // When a time range is selected via drag, narrow the stat cards and comment
   // feed to it; the chart itself always sees the full series (it just zooms).
@@ -176,6 +193,8 @@ export default function SentimentTab({ sel, setSel }) {
                 b={b}
                 seriesA={seriesA}
                 seriesB={seriesB}
+                namedA={namedA}
+                namedB={namedB}
                 comments={state.comments}
                 bucketSeconds={bucketSeconds}
                 range={range}

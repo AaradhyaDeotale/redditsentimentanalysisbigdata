@@ -4,6 +4,13 @@ function scoreColor(label) {
   return "text-muted";
 }
 
+// "apple" -> "apple (company)" when keyword_senses resolved it; plain
+// (unambiguous, or still-ambiguous) keywords are shown as-is.
+function keywordLabel(kw, senses) {
+  const sense = senses?.[kw];
+  return sense ? `${kw} (${sense})` : kw;
+}
+
 function CommentRow({ c }) {
   const sign =
     c.sentiment_label === "negative"
@@ -11,6 +18,7 @@ function CommentRow({ c }) {
       : c.sentiment_label === "positive"
         ? "+"
         : "";
+  const keywords = c.matched_keywords || [];
   return (
     <li className="flex gap-3 border-b border-edge/60 px-1 py-2.5 last:border-0">
       <span
@@ -27,8 +35,16 @@ function CommentRow({ c }) {
         >
           {c.body || "(no text)"}
         </p>
-        <p className="mt-0.5 text-xs text-muted">
-          u/{c.author} · {c.matched_keywords?.join(", ")}
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted">
+          <span>u/{c.author}</span>
+          {keywords.map((kw) => (
+            <span
+              key={kw}
+              className="rounded-full border border-edge px-1.5 py-0.5 lowercase text-muted"
+            >
+              {keywordLabel(kw, c.keyword_senses)}
+            </span>
+          ))}
         </p>
       </div>
     </li>

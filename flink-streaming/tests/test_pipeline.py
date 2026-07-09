@@ -26,7 +26,11 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "src"))
 
 from flink_job.operators.parse import build_cleaned_record, parse_comment_payload
-from flink_job.operators.keyword_filter import KeywordFilterFunction, _compile_keyword_patterns
+from flink_job.operators.keyword_filter import (
+    KeywordFilterFunction,
+    _compile_keyword_patterns,
+    load_w2v_resolver,
+)
 from flink_job.operators.sentiment_placeholder import NullSentimentScorer
 from flink_job.preprocessing.cleaner import TextCleaner
 from flink_job.preprocessing.language_detector import detect_language, is_supported_language
@@ -53,6 +57,18 @@ def keyword_filter():
     fn = KeywordFilterFunction(keywords=["apple", "android"])
     fn._patterns = _compile_keyword_patterns(["apple", "android"])
     return fn
+
+
+class FakeSenseResolver:
+    """Test double for W2VSenseResolver: returns a canned sense, no model needed."""
+
+    def __init__(self, sense: str):
+        self._sense = sense
+        self.calls: list[tuple[list[str], list[str]]] = []
+
+    def resolve(self, tokens, subkeywords):
+        self.calls.append((tokens, subkeywords))
+        return self._sense
 
 
 class TestParsing:
@@ -176,12 +192,14 @@ class TestTokenizer:
 
 class TestKeywordFilter:
     def test_matching_record(self, keyword_filter):
+        # matched_keywords stays plain; sense goes into keyword_senses
         record = {
             "cleaned_body": "I love my Apple iPhone",
             "tokens": ["I", "love", "my", "Apple", "iPhone"],
         }
         result = keyword_filter.map(record)
         assert "apple" in result["matched_keywords"]
+        assert result["keyword_senses"] == {"apple": "company"}
 
     def test_non_matching_record(self, keyword_filter):
         record = {
@@ -190,8 +208,11 @@ class TestKeywordFilter:
         }
         result = keyword_filter.map(record)
         assert result["matched_keywords"] == []
+        assert result["keyword_senses"] == {}
 
     def test_multiple_matches(self, keyword_filter):
+        # No sense-context words present -> apple is ambiguous; android
+        # (not in the ambiguous config) has no entry in keyword_senses.
         record = {
             "cleaned_body": "Comparing Apple vs Android phones",
             "tokens": ["Comparing", "Apple", "vs", "Android", "phones"],
@@ -199,6 +220,7 @@ class TestKeywordFilter:
         result = keyword_filter.map(record)
         assert "apple" in result["matched_keywords"]
         assert "android" in result["matched_keywords"]
+        assert result["keyword_senses"] == {"apple": "ambiguous"}
 
     def test_no_partial_match(self, keyword_filter):
         # apple should NOT match pineapple
@@ -208,14 +230,125 @@ class TestKeywordFilter:
         }
         result = keyword_filter.map(record)
         assert "apple" not in result["matched_keywords"]
+        assert result["keyword_senses"] == {}
 
     def test_case_insensitive(self, keyword_filter):
+        # No sense-context words present -> ambiguous, regardless of case
         record = {
             "cleaned_body": "APPLE makes great phones",
             "tokens": ["APPLE", "makes", "great", "phones"],
         }
         result = keyword_filter.map(record)
         assert "apple" in result["matched_keywords"]
+        assert result["keyword_senses"] == {"apple": "ambiguous"}
+
+    def test_fruit_sense_tagged(self, keyword_filter):
+        record = {
+            "cleaned_body": "I ate an apple from the tree",
+            "tokens": ["I", "ate", "an", "apple", "from", "the", "tree"],
+        }
+        result = keyword_filter.map(record)
+        assert "apple" in result["matched_keywords"]
+        assert result["keyword_senses"] == {"apple": "fruit"}
+
+    def test_non_ambiguous_keyword_absent_from_senses(self, keyword_filter):
+        # android is not in the ambiguous config, so it must never appear
+        # in keyword_senses even though it matches.
+        record = {
+            "cleaned_body": "Android phones are great",
+            "tokens": ["Android", "phones", "are", "great"],
+        }
+        result = keyword_filter.map(record)
+        assert "android" in result["matched_keywords"]
+        assert "android" not in result["keyword_senses"]
+
+    def test_subkeyword_configured_keyword_uses_resolver(self):
+        # "jaguar" has no hard-coded AMBIGUOUS_KEYWORDS entry, but with
+        # subkeywords configured + a resolver injected, it should get a sense.
+        resolver = FakeSenseResolver("car")
+        fn = KeywordFilterFunction(
+            keywords=["jaguar"],
+            subkeywords={"jaguar": ["car", "animal"]},
+            resolver=resolver,
+        )
+        fn._patterns = _compile_keyword_patterns(["jaguar"])
+        record = {
+            "cleaned_body": "I love my new Jaguar",
+            "tokens": ["I", "love", "my", "new", "Jaguar"],
+        }
+        result = fn.map(record)
+        assert result["keyword_senses"] == {"jaguar": "car"}
+        assert resolver.calls == [(record["tokens"], ["car", "animal"])]
+
+    def test_keyword_without_subkeywords_unaffected_by_resolver(self):
+        # A resolver is present, but "android" has no subkeywords configured,
+        # and isn't in AMBIGUOUS_KEYWORDS - behavior must be identical to today.
+        resolver = FakeSenseResolver("car")
+        fn = KeywordFilterFunction(
+            keywords=["android"],
+            subkeywords={"jaguar": ["car", "animal"]},
+            resolver=resolver,
+        )
+        fn._patterns = _compile_keyword_patterns(["android"])
+        record = {
+            "cleaned_body": "Android phones are great",
+            "tokens": ["Android", "phones", "are", "great"],
+        }
+        result = fn.map(record)
+        assert "android" not in result["keyword_senses"]
+        assert resolver.calls == []
+
+    def test_resolver_returns_ambiguous_is_passed_through(self):
+        resolver = FakeSenseResolver("ambiguous")
+        fn = KeywordFilterFunction(
+            keywords=["jaguar"],
+            subkeywords={"jaguar": ["car", "animal"]},
+            resolver=resolver,
+        )
+        fn._patterns = _compile_keyword_patterns(["jaguar"])
+        record = {
+            "cleaned_body": "The jaguar ran fast",
+            "tokens": ["The", "jaguar", "ran", "fast"],
+        }
+        result = fn.map(record)
+        assert result["keyword_senses"] == {"jaguar": "ambiguous"}
+
+    def test_model_absent_falls_back_to_hardcoded_disambiguation(self):
+        # resolver=None (model failed to load / absent) but "apple" is still
+        # in AMBIGUOUS_KEYWORDS - existing hard-coded resolve_sense path runs.
+        fn = KeywordFilterFunction(
+            keywords=["apple"],
+            subkeywords={"apple": ["technology", "fruit"]},
+            resolver=None,
+        )
+        fn._patterns = _compile_keyword_patterns(["apple"])
+        record = {
+            "cleaned_body": "I love my Apple iPhone",
+            "tokens": ["I", "love", "my", "Apple", "iPhone"],
+        }
+        result = fn.map(record)
+        assert result["keyword_senses"] == {"apple": "company"}
+
+    def test_model_absent_and_keyword_not_hardcoded_is_ambiguous(self):
+        # resolver=None and "jaguar" has no AMBIGUOUS_KEYWORDS entry either -
+        # can't resolve, so it's reported as ambiguous rather than dropped.
+        fn = KeywordFilterFunction(
+            keywords=["jaguar"],
+            subkeywords={"jaguar": ["car", "animal"]},
+            resolver=None,
+        )
+        fn._patterns = _compile_keyword_patterns(["jaguar"])
+        record = {
+            "cleaned_body": "The jaguar ran fast",
+            "tokens": ["The", "jaguar", "ran", "fast"],
+        }
+        result = fn.map(record)
+        assert result["keyword_senses"] == {"jaguar": "ambiguous"}
+
+    def test_load_w2v_resolver_returns_none_when_model_missing(self):
+        # Nonexistent path -> Word2Vec.load() raises -> graceful None, no crash.
+        resolver = load_w2v_resolver("/nonexistent/path/word2vec.model")
+        assert resolver is None
 
 
 class TestCleanedRecordSchema:
