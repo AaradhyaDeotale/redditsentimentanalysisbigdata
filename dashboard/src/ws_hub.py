@@ -7,9 +7,14 @@ thread-safe hand-off:
 
     consumer thread --publish_threadsafe--> asyncio.Queue --broadcaster--> sockets
 
-Each client subscribes to a set of keywords; the hub sends only matching
-records and rate-limits the per-keyword comment stream so the browser is never
-flooded. Window (aggregate) messages are not throttled - they're low volume.
+Each client subscribes to a set of (base) keywords; the hub sends only
+matching records and rate-limits both streams per client so the browser is
+never flooded. Window records are keyed by base_keyword so ambiguous
+keywords fanned out into senses ("apple:company", "apple:fruit", ...) are
+throttled as one budget, not one budget per sense - otherwise a keyword with
+3 senses would triple its effective rate. The window limiter is set very
+generously since window messages were previously unthrottled and are still
+low volume in the single-sense case.
 """
 
 import asyncio
@@ -18,16 +23,19 @@ from .ratelimit import RateLimiter
 
 COMMENT_RATE = 5      # comments/sec/keyword delivered to each client
 COMMENT_BURST = 3
+WINDOW_RATE = 20       # window updates/sec/base-keyword delivered to each client
+WINDOW_BURST = 10
 QUEUE_MAXSIZE = 10_000
 
 
 class _Client:
-    __slots__ = ("ws", "keywords", "limiter")
+    __slots__ = ("ws", "keywords", "limiter", "window_limiter")
 
     def __init__(self, ws):
         self.ws = ws
         self.keywords: set[str] = set()
         self.limiter = RateLimiter(rate=COMMENT_RATE, burst=COMMENT_BURST)
+        self.window_limiter = RateLimiter(rate=WINDOW_RATE, burst=WINDOW_BURST)
 
 
 class Hub:
@@ -76,15 +84,19 @@ class Hub:
 
     @staticmethod
     def _should_send(client: _Client, msg: dict) -> bool:
-        # A window belongs to one keyword; a comment may match several.
+        # A window belongs to one (possibly sense-qualified) keyword; a
+        # comment may match several (always plain, never sense-qualified).
         if msg.get("type") == "comment":
             matched = {str(k).lower() for k in (msg.get("matched_keywords") or [])}
             hits = matched & client.keywords
             if not hits:
                 return False
             return client.limiter.allow(sorted(hits)[0])  # throttle per keyword
-        keyword = (msg.get("keyword") or "").lower()
-        return bool(keyword) and keyword in client.keywords
+        keyword = str(msg.get("keyword") or "")
+        base = str(msg.get("base_keyword") or keyword.split(":", 1)[0]).lower()
+        if not base or base not in client.keywords:
+            return False
+        return client.window_limiter.allow(base)  # throttle per base keyword
 
     # --- connection management ---------------------------------------------
     async def connect(self, ws) -> _Client:

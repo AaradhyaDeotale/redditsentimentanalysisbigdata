@@ -73,7 +73,7 @@ flowchart LR
 | **Kafka Source** | Reads UTF-8 JSON strings from `reddit-comments` |
 | **Parse** | Validates fields; bad records → `reddit-comments-malformed` |
 | **Preprocess** | Removes URLs/markdown; detects language; tokenizes; keeps emojis |
-| **Keyword filter** | Tags each record with `matched_keywords` (e.g. `apple`, `android`) |
+| **Keyword filter** | Tags each record with `matched_keywords` (e.g. `apple`, `android`); ambiguous keywords like `apple` also get an entry in `keyword_senses` (e.g. `{"apple": "company"}`) via context-word disambiguation |
 | **Sentiment ML** | Scores `tokens` via `SentimentMLFunction` / `ModelScorer` from `ml-model` |
 | **Event time** | Watermarks from `created_utc` |
 | **Window aggregation** | Per-keyword tumbling event-time windows → `sentiment-results` |
@@ -102,6 +102,7 @@ Each scored, preprocessed comment written for downstream use or inspection:
   "score": 42,
   "controversiality": 0,
   "matched_keywords": ["apple"],
+  "keyword_senses": {"apple": "company"},
   "sentiment_label": "positive",
   "sentiment_score": 0.87,
   "sentiment_model": "v20240620_120000",
@@ -110,6 +111,8 @@ Each scored, preprocessed comment written for downstream use or inspection:
 ```
 
 `sentiment_status` may also be `skipped_too_short` or `no_model_available` when the model is missing or tokens are below `MIN_TOKENS`.
+
+**Word-sense disambiguation**: `matched_keywords` is unchanged (always plain keyword strings, e.g. `apple`, `android`) so existing consumers keyed on exact keyword strings (window aggregation, dashboard subscriptions) keep working without modification. Keywords configured as ambiguous in `disambiguation.py` (currently `apple`) additionally get an entry in the new `keyword_senses` dict, mapping the matched keyword to its resolved sense: `"company"`, `"fruit"`, or `"ambiguous"` when context is inconclusive. Non-ambiguous keywords (e.g. `android`) never appear in `keyword_senses`. Consumers that don't care about sense can ignore the new field entirely.
 
 ### Dashboard aggregate (`sentiment-results`)
 
@@ -152,6 +155,7 @@ flink-streaming/
 │   ├── operators/
 │   │   ├── parse.py             # JSON parse, validation, cleaning, side output
 │   │   ├── keyword_filter.py    # Tags matched_keywords from KEYWORD_FILTER
+│   │   ├── disambiguation.py    # Context-word sense resolution (apple: company vs fruit)
 │   │   ├── sentiment_ml.py      # Real-time ML scoring (ModelScorer from ml-model)
 │   │   ├── sentiment_window.py  # Keyword fan-out + tumbling window aggregation
 │   │   └── sentiment_placeholder.py  # NullSentimentScorer interface (used by tests)

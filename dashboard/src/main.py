@@ -113,8 +113,14 @@ def sentiment(keyword: str = Query(..., min_length=1)):
 
 @app.get("/api/timeseries")
 def timeseries(keyword: str = Query(..., min_length=1)):
-    """Full sentiment-over-time series for a single keyword."""
-    return {"keyword": keyword.lower(), "points": store.timeseries(keyword)}
+    """Sentiment-over-time series for a keyword, broken out by sense.
+
+    `senses` maps each literal stored key ("apple", or "apple:company" /
+    "apple:fruit" / ... for an ambiguous keyword) to its points, so a
+    disambiguated keyword doesn't collapse into one blended line - the
+    frontend renders one chart series per sense.
+    """
+    return {"keyword": keyword.lower(), "senses": store.timeseries_by_base(keyword)}
 
 
 @app.get("/api/comments")
@@ -134,15 +140,16 @@ def compare(
     keyword1: str = Query(..., min_length=1),
     keyword2: str = Query(..., min_length=1),
 ):
-    """Timeseries for two keywords at once - what the dashboard chart uses."""
+    """Sense-broken-out timeseries for two keywords at once - what the
+    dashboard chart uses. See /api/timeseries for the `senses` shape."""
     return {
         "keyword1": {
             "keyword": keyword1.lower(),
-            "points": store.timeseries(keyword1),
+            "senses": store.timeseries_by_base(keyword1),
         },
         "keyword2": {
             "keyword": keyword2.lower(),
-            "points": store.timeseries(keyword2),
+            "senses": store.timeseries_by_base(keyword2),
         },
     }
 

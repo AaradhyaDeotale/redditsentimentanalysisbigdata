@@ -16,6 +16,11 @@ Kafka message is one already-summarized record. Confirmed schema:
       "comment_count": 143
     }
 
+Since P3's word-sense disambiguation (see git history), ambiguous keywords fan
+out into sense-qualified records - "keyword" may be "apple:company" - with a
+"base_keyword" ("apple") alongside for matching. `_parse` derives base_keyword
+by splitting on ":" if the upstream message omits it.
+
 > Earlier in development this file did per-comment aggregation on the dashboard
 > side - removed once Sahil confirmed P4 aggregates upstream. See git history.
 
@@ -79,9 +84,12 @@ def _parse(raw_value: bytes) -> dict | None:
     if not keyword:
         return None
 
+    base_keyword = msg.get("base_keyword") or str(keyword).split(":", 1)[0]
+
     try:
         return {
             "keyword": str(keyword),
+            "base_keyword": str(base_keyword).lower(),
             "window_end": int(msg.get("window_end") or time.time()),
             "positive_ratio": float(msg.get("positive_ratio", 0.0)),
             "comment_count": int(msg.get("comment_count", 0)),
@@ -95,6 +103,10 @@ def _parse_comment(raw_value: bytes) -> dict | None:
 
     Rejects records that were never scored or matched no keyword (they can't
     appear in the feed). Maps `original_body` to `body` for the UI.
+
+    `keyword_senses` (from P3's disambiguation, e.g. {"apple": "company"}) is
+    passed through as-is when present so the frontend can badge ambiguous
+    matches - `matched_keywords` itself stays plain (never sense-qualified).
     """
     try:
         msg = json.loads(raw_value.decode("utf-8"))
@@ -106,6 +118,8 @@ def _parse_comment(raw_value: bytes) -> dict | None:
     if not keywords or not label:
         return None
 
+    senses = msg.get("keyword_senses")
+
     try:
         return {
             "id": str(msg.get("id", "")),
@@ -113,6 +127,10 @@ def _parse_comment(raw_value: bytes) -> dict | None:
             "created_utc": int(msg.get("created_utc") or time.time()),
             "body": str(msg.get("original_body") or msg.get("body") or ""),
             "matched_keywords": [str(k) for k in keywords],
+            "keyword_senses": (
+                {str(k): str(v) for k, v in senses.items()}
+                if isinstance(senses, dict) else {}
+            ),
             "sentiment_label": str(label),
             "sentiment_score": float(msg.get("sentiment_score", 0.0)),
         }
@@ -205,6 +223,10 @@ def _run_cleaned_consumer() -> None:
 
 _MOCK_KEYWORDS = ["apple", "android", "tesla", "google", "bitcoin",
                   "windows", "linux", "netflix", "spotify", "amazon"]
+# "apple" is the one ambiguous keyword in mock mode too, so the sense-aware
+# chart/badges are exercisable locally without a live Flink job (see
+# flink_job.operators.disambiguation.AMBIGUOUS_KEYWORDS).
+_APPLE_SENSES = ["company", "fruit", "ambiguous"]
 _MOCK_BODIES = [
     "honestly the new update is a huge improvement",
     "this keeps crashing on me, so frustrating",
@@ -230,7 +252,7 @@ def _mock_comment(keyword: str, cid: int) -> dict:
         "negative": random.uniform(-0.95, -0.2),
         "neutral": random.uniform(-0.15, 0.15),
     }[label]
-    return {
+    comment = {
         "id": f"mock-{cid}",
         "author": random.choice(_MOCK_AUTHORS),
         "created_utc": int(time.time()),
@@ -239,23 +261,35 @@ def _mock_comment(keyword: str, cid: int) -> dict:
         "sentiment_label": label,
         "sentiment_score": round(score, 3),
     }
+    if keyword == "apple":
+        comment["keyword_senses"] = {"apple": random.choice(_APPLE_SENSES)}
+    return comment
 
 
 def _run_mock_producer() -> None:
     """Generate fake windows AND fake scored comments so the whole dashboard
     (chart + live feed) works without Kafka."""
     print("[consumer] MOCK MODE - generating fake windows + comments")
-    # each keyword has a drifting 'true' positive rate so charts look alive
-    truth = {k: random.uniform(0.4, 0.7) for k in _MOCK_KEYWORDS}
+    # each (sense-qualified, for "apple") key has a drifting 'true' positive
+    # rate so charts look alive
+    truth = {}
+    for k in _MOCK_KEYWORDS:
+        if k == "apple":
+            for sense in _APPLE_SENSES:
+                truth[f"apple:{sense}"] = random.uniform(0.4, 0.7)
+        else:
+            truth[k] = random.uniform(0.4, 0.7)
     cid = 0
     while True:
         now = int(time.time())
-        for k in _MOCK_KEYWORDS:
-            truth[k] = min(0.95, max(0.05, truth[k] + random.uniform(-0.04, 0.04)))
+        for key in truth:
+            truth[key] = min(0.95, max(0.05, truth[key] + random.uniform(-0.04, 0.04)))
+            base = key.split(":", 1)[0]
             _emit_window({
-                "keyword": k,
+                "keyword": key,
+                "base_keyword": base,
                 "window_end": now,
-                "positive_ratio": round(truth[k] + random.uniform(-0.02, 0.02), 4),
+                "positive_ratio": round(truth[key] + random.uniform(-0.02, 0.02), 4),
                 "comment_count": random.randint(20, 200),
             })
         # sprinkle a handful of comments across random keywords each cycle

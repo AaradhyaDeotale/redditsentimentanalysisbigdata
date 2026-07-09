@@ -25,6 +25,27 @@ def _env_list(key: str, default: str = "") -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def parse_subkeywords(raw: str) -> dict[str, list[str]]:
+    """Parse a ``"apple:technology,fruit;jaguar:car,animal"`` style string into
+    ``{"apple": ["technology", "fruit"], "jaguar": ["car", "animal"]}``.
+
+    Malformed segments (missing ``:``, empty keyword, no subkeywords) are
+    skipped rather than raising, since this feeds a streaming operator that
+    must not crash on a bad env var.
+    """
+    result: dict[str, list[str]] = {}
+    for segment in raw.strip().split(";"):
+        segment = segment.strip()
+        if not segment or ":" not in segment:
+            continue
+        keyword, _, values = segment.partition(":")
+        keyword = keyword.strip().lower()
+        subkeywords = [v.strip().lower() for v in values.split(",") if v.strip()]
+        if keyword and subkeywords:
+            result[keyword] = subkeywords
+    return result
+
+
 @dataclass(frozen=True)
 class KafkaSettings:
     broker: str

@@ -41,6 +41,25 @@ class SentimentStore:
         with self._lock:
             return list(self._data.get(keyword.lower(), []))
 
+    def timeseries_by_base(self, base_keyword: str) -> dict[str, list[dict]]:
+        """All series belonging to a base keyword, keyed by their literal
+        (possibly sense-qualified) keyword string.
+
+        Ambiguous keywords fan out at ingest into "base:sense" keys (see
+        consumer.py); a plain, request for "apple" would otherwise never
+        match anything since nothing is stored under that exact key anymore.
+        This groups every "apple" / "apple:company" / "apple:fruit" / ...
+        series stored so far under one response, oldest first per series.
+        """
+        base = base_keyword.lower()
+        prefix = f"{base}:"
+        with self._lock:
+            return {
+                kw: list(series)
+                for kw, series in self._data.items()
+                if kw == base or kw.startswith(prefix)
+            }
+
     def latest(self, keyword: str) -> dict | None:
         """Return the most recent record for a keyword, or None."""
         with self._lock:

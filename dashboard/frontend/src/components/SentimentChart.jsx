@@ -20,20 +20,38 @@ const fmtTime = (s) =>
     second: "2-digit",
   });
 
-// Keyword A = cool blues (matches blue % line), Keyword B = warm oranges (matches orange % line).
+// Keyword A = cool blues, Keyword B = warm oranges - bar stacks.
 // Within each stack: bright = positive, dark = negative, muted = neutral.
-const PALETTE_A = {
+const BAR_PALETTE_A = {
   positive: "#58a6ff",
   negative: "#1f4e8c",
   neutral: "#484f58",
 };
-const PALETTE_B = {
+const BAR_PALETTE_B = {
   positive: "#f0883e",
   negative: "#b45309",
   neutral: "#6e5f4a",
 };
 
-function ChartTooltip({ active, payload, label, keywordA, keywordB }) {
+// One color family per compared keyword for the % positive trend lines (same
+// hues as that keyword's bar stack), with a couple of extra shades so an
+// ambiguous keyword's senses (e.g. "apple (company)" vs "apple (fruit)")
+// render as multiple lines that still read as belonging to the same keyword.
+const LINE_PALETTE_A = ["#58a6ff", "#79c0ff", "#1f6feb"];
+const LINE_PALETTE_B = ["#f0883e", "#ffa657", "#c9622b"];
+
+const labelFor = (s) => (s.sense ? `${s.base} (${s.sense})` : s.base);
+
+// Attach a display label + color to each of a keyword's sense series.
+function styledSeries(namedSeries, palette) {
+  return namedSeries.map((s, i) => ({
+    ...s,
+    label: labelFor(s),
+    color: palette[i % palette.length],
+  }));
+}
+
+function ChartTooltip({ active, payload, label, keywordA, keywordB, linesA, linesB }) {
   if (!active || !payload?.length) return null;
   const row = payload[0]?.payload;
   if (!row) return null;
@@ -46,27 +64,37 @@ function ChartTooltip({ active, payload, label, keywordA, keywordB }) {
       <div className="mb-2 font-medium text-text">{fmtTime(label)}</div>
       {aTotal > 0 && (
         <div className="mb-1.5">
-          <div className="font-medium" style={{ color: PALETTE_A.positive }}>{keywordA}</div>
+          <div className="font-medium" style={{ color: BAR_PALETTE_A.positive }}>{keywordA}</div>
           <div className="flex gap-2">
-            <span style={{ color: PALETTE_A.positive }}>+{row.a_positive}</span>
-            <span style={{ color: PALETTE_A.negative }}>−{row.a_negative}</span>
-            <span style={{ color: PALETTE_A.neutral }}>○{row.a_neutral}</span>
+            <span style={{ color: BAR_PALETTE_A.positive }}>+{row.a_positive}</span>
+            <span style={{ color: BAR_PALETTE_A.negative }}>−{row.a_negative}</span>
+            <span style={{ color: BAR_PALETTE_A.neutral }}>○{row.a_neutral}</span>
           </div>
-          {row[keywordA] != null && (
-            <div className="text-muted">{row[keywordA]}% positive</div>
+          {linesA.map(
+            (s) =>
+              row[s.key] != null && (
+                <div key={s.key} style={{ color: s.color }}>
+                  {s.label}: {row[s.key]}%
+                </div>
+              ),
           )}
         </div>
       )}
       {bTotal > 0 && (
         <div>
-          <div className="font-medium" style={{ color: PALETTE_B.positive }}>{keywordB}</div>
+          <div className="font-medium" style={{ color: BAR_PALETTE_B.positive }}>{keywordB}</div>
           <div className="flex gap-2">
-            <span style={{ color: PALETTE_B.positive }}>+{row.b_positive}</span>
-            <span style={{ color: PALETTE_B.negative }}>−{row.b_negative}</span>
-            <span style={{ color: PALETTE_B.neutral }}>○{row.b_neutral}</span>
+            <span style={{ color: BAR_PALETTE_B.positive }}>+{row.b_positive}</span>
+            <span style={{ color: BAR_PALETTE_B.negative }}>−{row.b_negative}</span>
+            <span style={{ color: BAR_PALETTE_B.neutral }}>○{row.b_neutral}</span>
           </div>
-          {row[keywordB] != null && (
-            <div className="text-muted">{row[keywordB]}% positive</div>
+          {linesB.map(
+            (s) =>
+              row[s.key] != null && (
+                <div key={s.key} style={{ color: s.color }}>
+                  {s.label}: {row[s.key]}%
+                </div>
+              ),
           )}
         </div>
       )}
@@ -74,16 +102,26 @@ function ChartTooltip({ active, payload, label, keywordA, keywordB }) {
   );
 }
 
+// seriesA/seriesB: flat, comment-count-weighted-merged series per keyword
+// (see lib/messages.js#mergeSeries) - used for the bar stacks, which show
+// total comment volume regardless of sense.
+// namedA/namedB: one entry per sense the keyword has resolved into so far
+// (see lib/messages.js#seriesForBase) - used for the % positive trend lines,
+// so an ambiguous keyword renders one line per sense.
 export default function SentimentChart({
   a,
   b,
   seriesA,
   seriesB,
+  namedA,
+  namedB,
   comments,
   bucketSeconds,
   range,
   onRangeChange,
 }) {
+  const linesA = styledSeries(namedA, LINE_PALETTE_A);
+  const linesB = styledSeries(namedB, LINE_PALETTE_B);
   const data = buildSentimentChartRows(
     comments,
     seriesA,
@@ -91,6 +129,8 @@ export default function SentimentChart({
     a,
     b,
     bucketSeconds,
+    namedA,
+    namedB,
   );
   const [drag, setDrag] = useState(null);
 
@@ -179,7 +219,7 @@ export default function SentimentChart({
           />
           <Tooltip
             content={
-              <ChartTooltip keywordA={a} keywordB={b} />
+              <ChartTooltip keywordA={a} keywordB={b} linesA={linesA} linesB={linesB} />
             }
           />
           <Legend
@@ -192,10 +232,10 @@ export default function SentimentChart({
                 b_positive: `${b} positive`,
                 b_negative: `${b} negative`,
                 b_neutral: `${b} neutral`,
-                [a]: `${a} % positive`,
-                [b]: `${b} % positive`,
               };
-              return labels[value] || value;
+              if (labels[value]) return labels[value];
+              const line = [...linesA, ...linesB].find((s) => s.key === value);
+              return line ? `${line.label} % positive` : value;
             }}
           />
 
@@ -205,7 +245,7 @@ export default function SentimentChart({
             dataKey="a_positive"
             name="a_positive"
             stackId="a"
-            fill={PALETTE_A.positive}
+            fill={BAR_PALETTE_A.positive}
             isAnimationActive={false}
           />
           <Bar
@@ -213,7 +253,7 @@ export default function SentimentChart({
             dataKey="a_negative"
             name="a_negative"
             stackId="a"
-            fill={PALETTE_A.negative}
+            fill={BAR_PALETTE_A.negative}
             isAnimationActive={false}
           />
           <Bar
@@ -221,7 +261,7 @@ export default function SentimentChart({
             dataKey="a_neutral"
             name="a_neutral"
             stackId="a"
-            fill={PALETTE_A.neutral}
+            fill={BAR_PALETTE_A.neutral}
             radius={[2, 2, 0, 0]}
             isAnimationActive={false}
           />
@@ -232,7 +272,7 @@ export default function SentimentChart({
             dataKey="b_positive"
             name="b_positive"
             stackId="b"
-            fill={PALETTE_B.positive}
+            fill={BAR_PALETTE_B.positive}
             isAnimationActive={false}
           />
           <Bar
@@ -240,7 +280,7 @@ export default function SentimentChart({
             dataKey="b_negative"
             name="b_negative"
             stackId="b"
-            fill={PALETTE_B.negative}
+            fill={BAR_PALETTE_B.negative}
             isAnimationActive={false}
           />
           <Bar
@@ -248,34 +288,30 @@ export default function SentimentChart({
             dataKey="b_neutral"
             name="b_neutral"
             stackId="b"
-            fill={PALETTE_B.neutral}
+            fill={BAR_PALETTE_B.neutral}
             radius={[2, 2, 0, 0]}
             isAnimationActive={false}
           />
 
-          {/* % positive trend lines */}
-          <Line
-            yAxisId="pct"
-            type="monotone"
-            dataKey={a}
-            name={a}
-            stroke={PALETTE_A.positive}
-            strokeWidth={2}
-            dot={false}
-            isAnimationActive={false}
-            connectNulls
-          />
-          <Line
-            yAxisId="pct"
-            type="monotone"
-            dataKey={b}
-            name={b}
-            stroke={PALETTE_B.positive}
-            strokeWidth={2}
-            dot={false}
-            isAnimationActive={false}
-            connectNulls
-          />
+          {/* % positive trend lines - one per resolved sense (or a single
+              plain line for a keyword with no sense ambiguity yet).
+              isAnimationActive={false} is the flicker fix: no entry
+              re-animation on every append, so the line grows instead of
+              sweeping in again. */}
+          {[...linesA, ...linesB].map((s) => (
+            <Line
+              key={s.key}
+              yAxisId="pct"
+              type="monotone"
+              dataKey={s.key}
+              name={s.label}
+              stroke={s.color}
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+              connectNulls
+            />
+          ))}
 
           {drag && (
             <ReferenceArea

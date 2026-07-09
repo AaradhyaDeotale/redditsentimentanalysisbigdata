@@ -121,6 +121,8 @@ export function buildSentimentChartRows(
   keywordA,
   keywordB,
   bucketSeconds,
+  namedSeriesA = [],
+  namedSeriesB = [],
 ) {
   const aComments = bucketCommentsBySentiment(comments, keywordA, bucketSeconds);
   const bComments = bucketCommentsBySentiment(comments, keywordB, bucketSeconds);
@@ -172,6 +174,22 @@ export function buildSentimentChartRows(
     const t = Math.floor(p.window_end / bucketSeconds) * bucketSeconds;
     const row = ensure(t);
     row[keywordB] = Math.round(p.positive_ratio * 100);
+  }
+
+  // Per-sense % positive lines (e.g. "apple:company") - same time-bucketing
+  // as above, just keyed by each sense's series key instead of the bare
+  // keyword, so an ambiguous keyword can render one line per resolved sense.
+  for (const s of namedSeriesA) {
+    for (const p of bucketPoints(s.points, bucketSeconds)) {
+      const t = Math.floor(p.window_end / bucketSeconds) * bucketSeconds;
+      ensure(t)[s.key] = Math.round(p.positive_ratio * 100);
+    }
+  }
+  for (const s of namedSeriesB) {
+    for (const p of bucketPoints(s.points, bucketSeconds)) {
+      const t = Math.floor(p.window_end / bucketSeconds) * bucketSeconds;
+      ensure(t)[s.key] = Math.round(p.positive_ratio * 100);
+    }
   }
 
   return [...rows.values()].sort((x, y) => x.t - y.t);
