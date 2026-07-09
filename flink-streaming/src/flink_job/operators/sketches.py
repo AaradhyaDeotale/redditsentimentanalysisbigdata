@@ -37,6 +37,7 @@ import hashlib
 import math
 import os
 from collections import OrderedDict
+from functools import lru_cache
 from typing import Any, Iterable
 
 # ---------------------------------------------------------------------------
@@ -177,6 +178,45 @@ class HyperLogLog:
 
 
 # ---------------------------------------------------------------------------
+# distinctiveness weighting (TF-IDF against general English)
+# ---------------------------------------------------------------------------
+# Ranking by raw document frequency makes generic conversation words "trend"
+# the moment a window is thin - "already" and "whole" appear in ANY topic, so
+# on 8 comments they tie with everything else and win alphabetically. Instead
+# of chasing them with an ever-growing stopword list, weight each term by how
+# surprising it is in everyday English: wordfreq's Zipf scale puts "the" at
+# ~7.7, "already" at ~5.6 and "cranberry" at ~3.2, so
+#
+#   score = count x max(1, ZIPF_CEILING - zipf(term))
+#
+# makes a common-everywhere word need several times the mentions of a
+# genuinely topical one to outrank it, while the count factor keeps volume
+# relevant. A phrase is as informative as its RAREST word ("boiling water"
+# scores like "boiling"). wordfreq is optional by design: without it every
+# term weighs 1.0 and ranking degrades to plain counts.
+
+_ZIPF_CEILING = 7.5  # ~the most common English words ("the" is 7.7)
+_ZIPF_UNKNOWN = 2.5  # unseen tokens (names, slang) count as rare = informative
+
+try:
+    from wordfreq import zipf_frequency as _zipf
+except ImportError:  # keep the sketches dependency-free when absent
+    _zipf = None
+
+
+@lru_cache(maxsize=65536)
+def informativeness(term: str) -> float:
+    """How surprising a term is in general English (1.0 = pure filler)."""
+    if _zipf is None:
+        return 1.0
+    rarest = min(
+        (z if (z := _zipf(word, "en")) > 0 else _ZIPF_UNKNOWN)
+        for word in term.split()
+    )
+    return max(1.0, _ZIPF_CEILING - rarest)
+
+
+# ---------------------------------------------------------------------------
 # Trending = Count-Min Sketch + a small candidate list (heavy hitters)
 # ---------------------------------------------------------------------------
 
@@ -195,8 +235,10 @@ class TrendingCounter:
                  capacity: int | None = None):
         self.cms = CountMinSketch(width=width, depth=depth)
         self.top_k = top_k
-        # 4x headroom so borderline tokens can climb before being evicted
-        self.capacity = capacity or max(4 * top_k, 64)
+        # 8x headroom: candidates are kept by raw count but RANKED by
+        # count x informativeness, so a rare topical term with a modest count
+        # must survive eviction long enough for the final scoring to lift it.
+        self.capacity = capacity or max(8 * top_k, 128)
         self._candidates: dict[str, int] = {}
 
     def add(self, token: str, count: int = 1) -> None:
@@ -218,12 +260,20 @@ class TrendingCounter:
         self._candidates = {t: scored[t] for t in keep}
         return self
 
-    def top(self, k: int | None = None) -> list[tuple[str, int]]:
-        """[(token, estimated_count)] sorted by estimate, descending."""
+    def top(self, k: int | None = None) -> list[tuple[str, int, float]]:
+        """[(token, estimated_count, score)] by score, descending.
+
+        score = count x informativeness: everyday words need many times the
+        mentions of a topical one to rank (see the weighting section above).
+        """
         k = k or self.top_k
         ranked = sorted(
-            ((t, self.cms.estimate(t)) for t in self._candidates),
-            key=lambda pair: (-pair[1], pair[0]),
+            (
+                (t, est, round(est * informativeness(t), 2))
+                for t, est in
+                ((t, self.cms.estimate(t)) for t in self._candidates)
+            ),
+            key=lambda item: (-item[2], item[0]),
         )
         return ranked[:k]
 
@@ -274,7 +324,12 @@ _TRENDING_STOPWORDS: frozenset[str] = frozenset({
     "dont", "cant", "wont", "isnt", "arent", "wasnt", "werent", "didnt",
     "doesnt", "hasnt", "havent", "wouldnt", "couldnt", "shouldnt",
     "thats", "theres", "youre", "youve", "youll", "theyre", "theyve",
-    "ive", "hes", "shes", "its", "whats", "lets",
+    "ive", "hes", "shes", "its", "whats", "lets", "ill", "weve", "youd",
+    "theyd", "theyll", "whos", "hows",
+    # ...and their stems when the apostrophe splits instead ("don't" ->
+    # "don t"): fragments that are not words on their own
+    "don", "didn", "doesn", "isn", "wasn", "weren", "aren", "wouldn",
+    "couldn", "shouldn", "hasn", "haven", "hadn", "ain",
     # generic conversation filler - frequent in ANY topic, so never "trending"
     "people", "person", "think", "thought", "know", "knew", "good", "bad",
     "time", "times", "right", "wrong", "need", "needs", "back", "use",
@@ -288,6 +343,11 @@ _TRENDING_STOPWORDS: frozenset[str] = frozenset({
     "new", "old", "different", "keep", "kept", "put", "find", "found",
     "work", "works", "help", "try", "trying", "tried", "start", "started",
     "stop", "part", "place", "case", "fact", "least", "most", "less",
+    "already", "whole", "bottom", "moved", "move", "moves", "called",
+    "call", "calls", "bought", "buy", "buying", "went", "goes", "gone",
+    "done", "seem", "seems", "seemed", "ever", "every", "around", "away",
+    "enough", "else", "real", "since", "without", "thanks", "thank",
+    "sorry", "definitely", "honestly", "literally", "basically",
     # reddit-meta noise (bot messages, subreddit housekeeping)
     "post", "posts", "posted", "comment", "comments", "reddit", "thread",
     "sub", "subreddit", "karma", "mod", "mods", "moderator", "moderators",
@@ -303,6 +363,13 @@ _MIN_TOKEN_LEN = 3
 # total, so tiny windows have no statistical mass to rank. The stream is now
 # split per keyword, so the floor is lower than the old global default.
 TRENDING_MIN_TOKENS = int(os.getenv("TRENDING_MIN_TOKENS", "30"))
+
+# A term a single comment used is by definition not trending - it is that
+# comment's vocabulary. Terms below this document-frequency floor are dropped
+# from the published record; a quiet window can therefore publish EMPTY items
+# (still emitted, so the dashboard can say "window too quiet" with the
+# window's real timestamp instead of silently showing the previous window).
+TRENDING_MIN_COUNT = int(os.getenv("TRENDING_MIN_COUNT", "2"))
 
 
 def should_emit_trending(counter: "TrendingCounter") -> bool:
@@ -400,7 +467,8 @@ def build_trending_record(counter: TrendingCounter, keyword: str,
         "keyword": keyword,
         "window_start": int(window_start_ms // 1000),
         "window_end": int(window_end_ms // 1000),
-        "items": [{"token": t, "count": c} for t, c in counter.top()],
+        "items": [{"token": t, "count": c, "score": s}
+                  for t, c, s in counter.top() if c >= TRENDING_MIN_COUNT],
         "sketch": {
             "kind": "count-min",
             "width": counter.cms.width,

@@ -28,6 +28,7 @@ from flink_job.operators.sketches import (
     TrendingCounter,
     build_reach_record,
     build_trending_record,
+    informativeness,
     trending_terms,
     should_emit_trending,
     TRENDING_MIN_TOKENS,
@@ -156,7 +157,7 @@ class TestTrendingCounter:
         for token in stream:
             counter.add(token)
         top = counter.top()
-        assert [t for t, _ in top] == ["apple", "tesla", "brexit"]
+        assert [t for t, *_ in top] == ["apple", "tesla", "brexit"]
         assert top[0][1] >= 500  # CMS never undercounts
 
     def test_candidate_list_stays_bounded(self):
@@ -176,7 +177,8 @@ class TestTrendingCounter:
             a.add("tesla")
             b.add("brexit")
         a.merge(b)
-        assert a.top()[0] == ("apple", 120)
+        token, count, _score = a.top()[0]
+        assert (token, count) == ("apple", 120)
 
 
 class TestTermExtraction:
@@ -223,6 +225,14 @@ class TestTermExtraction:
                   "tokens": ["people", "think", "karma", "brexit"]}
         assert list(trending_terms(record, "tesla")) == ["brexit"]
 
+    def test_drops_low_signal_filler_seen_on_sparse_windows(self):
+        """Generic verbs/adverbs that surfaced as 'trends' on near-empty
+        real-data windows (already, whole, bought, ...) are stopwords."""
+        record = {"matched_keywords": ["coffee"],
+                  "tokens": ["already", "whole", "bottom", "moved",
+                             "bought", "roast"]}
+        assert list(trending_terms(record, "coffee")) == ["roast"]
+
     def test_short_keyword_still_anchors_phrases(self):
         """A tracked keyword below the countable length (e.g. 'ai') must
         still form phrases - phrases around the keyword are the feature."""
@@ -242,6 +252,30 @@ class TestTermExtraction:
         assert terms.count("video") == 1
         assert terms.count("video video") == 1  # phrase dedupes too
         assert terms.count("custom") == 1
+
+
+class TestDistinctivenessRanking:
+    """Ranking is count x informativeness (Zipf vs everyday English), so a
+    generic word cannot 'trend' just by being common in ALL conversation."""
+
+    def test_topical_terms_outrank_generic_filler(self):
+        pytest.importorskip("wordfreq")
+        counter = TrendingCounter()
+        for _ in range(3):
+            counter.add("moment")     # everyday word, high Zipf
+        for _ in range(2):
+            counter.add("cranberry")  # topical word, rare in general English
+        tokens = [t for t, *_ in counter.top()]
+        assert tokens.index("cranberry") < tokens.index("moment")
+
+    def test_phrase_scores_like_its_rarest_word(self):
+        pytest.importorskip("wordfreq")
+        assert informativeness("boiling water") == informativeness("boiling")
+
+    def test_unknown_tokens_count_as_rare(self):
+        pytest.importorskip("wordfreq")
+        # names/slang missing from the frequency table must not be buried
+        assert informativeness("xqzzyplat") > informativeness("moment")
 
 
 class TestRecentDuplicateFilter:
@@ -289,8 +323,31 @@ class TestResultRecords:
         assert rec["keyword"] == "apple"
         assert rec["window_start"] == 1_554_076_800
         assert rec["window_end"] == 1_554_080_400
-        assert rec["items"][0] == {"token": "apple", "count": 3}
+        item = rec["items"][0]
+        assert item["token"] == "apple"
+        assert item["count"] == 3
+        assert item["score"] >= item["count"]  # count x informativeness >= count
         assert rec["sketch"]["kind"] == "count-min"
+
+    def test_singleton_terms_are_not_published(self):
+        """A term one single comment used is vocabulary, not a trend: it
+        must not reach the dashboard (TRENDING_MIN_COUNT floor)."""
+        counter = TrendingCounter()
+        counter.add("battery life")
+        counter.add("battery life")
+        counter.add("cranberry")  # one comment's phrase, count 1
+        rec = build_trending_record(counter, "coke", 0, 60_000)
+        assert [i["token"] for i in rec["items"]] == ["battery life"]
+
+    def test_quiet_window_publishes_empty_items(self):
+        """All-singleton windows publish an empty item list (the record
+        still carries the window bounds so the UI can say 'too quiet')."""
+        counter = TrendingCounter()
+        for token in ["among", "awkward", "bear"]:
+            counter.add(token)
+        rec = build_trending_record(counter, "coke", 0, 60_000)
+        assert rec["items"] == []
+        assert rec["window_end"] == 60
 
     def test_reach_record_schema(self):
         hll = HyperLogLog(precision=12)
