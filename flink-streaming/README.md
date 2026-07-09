@@ -72,7 +72,7 @@ flowchart LR
 |-------|----------------|
 | **Kafka Source** | Reads UTF-8 JSON strings from `reddit-comments` |
 | **Parse** | Validates fields; bad records → `reddit-comments-malformed` |
-| **Preprocess** | Removes URLs/markdown; detects language; tokenizes; keeps emojis |
+| **Preprocess** | Removes URLs/markdown; drops non-English comments; tokenizes; keeps emojis |
 | **Keyword filter** | Tags each record with `matched_keywords` (e.g. `apple`, `android`); ambiguous keywords like `apple` also get an entry in `keyword_senses` (e.g. `{"apple": "company"}`) via context-word disambiguation |
 | **Sentiment ML** | Scores `tokens` via `SentimentMLFunction` / `ModelScorer` from `ml-model` |
 | **Event time** | Watermarks from `created_utc` |
@@ -95,7 +95,6 @@ Each scored, preprocessed comment written for downstream use or inspection:
   "author": "some_user",
   "created_utc": 1554076812,
   "subreddit": "technology",
-  "language": "en",
   "original_body": "Check this out 🔥 https://example.com",
   "cleaned_body": "Check this out 🔥",
   "tokens": ["Check", "this", "out", "🔥"],
@@ -130,6 +129,70 @@ Per-keyword, per-window records consumed by `../dashboard`:
 
 Windows are **tumbling event-time** buckets (default 3600 s) keyed by keyword. Only comments with a `sentiment_label` and at least one `matched_keywords` entry contribute to aggregation.
 
+### Sketch analytics (`analytics-results`)
+
+Probabilistic-sketch summaries consumed by the dashboard's **Trends** tab. Two record
+shapes share the topic, discriminated by `type`:
+
+```json
+{
+  "type": "trending",
+  "keyword": "apple",
+  "window_start": 1554076800,
+  "window_end": 1554080400,
+  "items": [{"token": "apple watch", "count": 5000}, {"token": "battery life", "count": 4100}],
+  "sketch": {"kind": "count-min", "width": 2048, "depth": 4, "stream_total": 812345}
+}
+```
+
+Trending is computed **per tracked keyword** (one sketch per `(keyword, window)`),
+over single words *and* two-word phrases from the keyword's comments — so the
+dashboard can follow the tracked-keyword set live and the list reads as real
+topics ("battery life", "apple watch") rather than lone words.
+
+```json
+{
+  "type": "reach",
+  "keyword": "apple",
+  "window_start": 1554076800,
+  "window_end": 1554080400,
+  "unique_authors": 1200000,
+  "comment_count": 1450000,
+  "sketch": {"kind": "hyperloglog", "precision": 12, "std_error": 0.0163}
+}
+```
+
+**Why sketches?** Exact answers to "how often does each token appear?" and "how many
+*distinct* authors mentioned apple?" need memory proportional to the stream
+(a counter per token; a set of author IDs per keyword). The sketches answer both in
+**fixed memory, one pass**, at the cost of a small bounded error:
+
+- **Count-Min Sketch** (`trending`): a `depth × width` grid of counters; each row
+  hashes a token to one column. Query = the minimum of the token's cells — collisions
+  can only inflate a cell, so estimates **never undercount**. A small candidate list
+  alongside the grid tracks the current heavy hitters so the top-K can be enumerated.
+- **HyperLogLog** (`reach`): hashes each author and remembers, per register, the
+  longest run of leading zero bits ever seen. Duplicate authors hash identically and
+  never move a register, so it counts **distinct** authors — no author IDs stored.
+
+Both sketches **merge** (grids add cell-wise; registers take the max), which is what
+lets Flink run them as windowed `AggregateFunction`s: each parallel worker sketches
+only its share of the stream and Flink merges the partial sketches per window.
+
+Tunables (accuracy vs memory — defaults chosen for this project's scale):
+
+| Env var | Default | Effect |
+|---|---|---|
+| `CMS_WIDTH` × `CMS_DEPTH` | 2048 × 4 | overcount ≤ `e/width` ≈ 0.13 % of the window's terms, w.p. ≈ 98 %; grid ≈ 64 KB per keyword, flat forever |
+| `TRENDING_TOP_K` | 20 | terms listed per (keyword, window) |
+| `TRENDING_MIN_TOKENS` | 30 | minimum terms a (keyword, window) needs before it is published |
+| `HLL_PRECISION` | 12 | 2¹² = 4096 registers ≈ 4 KB per (keyword, window); std error 1.04/√m ≈ 1.6 % |
+| `ANALYTICS_WINDOW_SEC` | `WINDOW_SIZE_SEC` | tumbling event-time window for both sketches |
+| `KAFKA_ANALYTICS_TOPIC` | `analytics-results` | output topic |
+
+For contrast: exactly counting 2 M distinct authors needs ~16 MB of IDs for **one**
+keyword; the HLL does it in 4 KB within ~2 %.
+
 ---
 
 ## Folder structure and what each file does
@@ -158,10 +221,11 @@ flink-streaming/
 │   │   ├── disambiguation.py    # Context-word sense resolution (apple: company vs fruit)
 │   │   ├── sentiment_ml.py      # Real-time ML scoring (ModelScorer from ml-model)
 │   │   ├── sentiment_window.py  # Keyword fan-out + tumbling window aggregation
+│   │   ├── sketches.py          # Count-Min + HyperLogLog sketches -> analytics-results
 │   │   └── sentiment_placeholder.py  # NullSentimentScorer interface (used by tests)
 │   └── preprocessing/
 │       ├── cleaner.py           # URL/markdown removal (emoji-safe)
-│       ├── language_detector.py # langdetect per comment
+│       ├── language_detector.py # English-only gate (drops non-English comments)
 │       └── tokenizer.py         # Tokenization, optional stopwords/stem
 ├── scripts/
 │   └── validate_output.py       # Read cleaned topic and check schema

@@ -1,10 +1,10 @@
 """
 JSON parsing, validation, and preprocessing for Reddit Kafka messages.
 
-Improvements over original:
-  - Language detection added to every output record
-  - Language-aware tokenization (correct stop-word list per language)
-  - author field preserved in output (was parsed but silently dropped)
+The pipeline is English-only: comments confidently detected as another
+language are dropped here, so downstream operators (sentiment, trending,
+reach) only ever see English text. The author field is preserved in the
+output for the reach (unique-authors) analytics.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from typing import Any
 
 from config.settings import REQUIRED_FIELDS
 from flink_job.preprocessing.cleaner import TextCleaner
-from flink_job.preprocessing.language_detector import detect_language
+from flink_job.preprocessing.language_detector import is_english
 from flink_job.preprocessing.tokenizer import tokenize
 
 log = logging.getLogger("flink_job.parse")
@@ -67,6 +67,8 @@ try:
                 remove_stopwords=self._remove_stopwords,
                 stem=self._stem,
             )
+            if cleaned is None:  # non-English comment - English-only pipeline
+                return
             yield cleaned
 
 except ImportError:
@@ -122,29 +124,29 @@ def build_cleaned_record(
     *,
     remove_stopwords: bool = False,
     stem: bool = False,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
+    """The cleaned record, or None if the comment is not English."""
     original = comment["body"]
     cleaned = cleaner.clean(original)
 
-    # Detect language AFTER cleaning to avoid URL/markdown noise
-    lang = detect_language(cleaned)
+    # Check language AFTER cleaning to avoid URL/markdown noise
+    if not is_english(cleaned):
+        return None
 
-    tokens = tokenize(
-        cleaned,
-        remove_stopwords=remove_stopwords,
-        stem=stem,
-        language=lang,
-    )
+    tokens = tokenize(cleaned, remove_stopwords=remove_stopwords, stem=stem)
 
     return {
         "id": comment["id"],
         "author": comment["author"],
         "created_utc": comment["created_utc"],
         "subreddit": comment["subreddit"],
-        "language": lang,
         "original_body": original,
         "cleaned_body": cleaned,
         "tokens": tokens,
         "score": comment["score"],
         "controversiality": comment["controversiality"],
+        # Everything that survives the gate is English by pipeline policy
+        # (short/ambiguous texts are kept and assumed English). Downstream
+        # consumers (ml-model's per-language breakdown) still read this field.
+        "language": "en",
     }

@@ -56,6 +56,25 @@ export const removeKeyword = (keyword) =>
     return res.json();
   });
 
+// Sketch analytics (P1): Count-Min trending tokens + HyperLogLog reach.
+// `keyword`: one keyword to scope to, or nothing to merge all tracked ones.
+export const getTrending = (keyword) =>
+  getJSON(keyword ? `/api/trending?keyword=${q(keyword)}` : "/api/trending");
+
+// With `keyword`: that keyword's full reach history ({keyword, points}).
+// Without: the latest window per tracked keyword ({keywords: [...]}).
+export const getReach = (keyword) =>
+  getJSON(keyword ? `/api/reach?keyword=${q(keyword)}` : "/api/reach");
+
+// Real comments behind the top trending terms - what people actually said.
+// Same `keyword` scoping semantics as getTrending.
+export const getTrendingExamples = (keyword) =>
+  getJSON(
+    keyword
+      ? `/api/trending/examples?keyword=${q(keyword)}`
+      : "/api/trending/examples",
+  );
+
 export const getKafkaOverview = () => getJSON("/api/kafka/overview");
 export const getKafkaTopics = () => getJSON("/api/kafka/topics");
 export const getKafkaGroups = () => getJSON("/api/kafka/groups");

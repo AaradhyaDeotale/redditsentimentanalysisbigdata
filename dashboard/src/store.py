@@ -71,6 +71,13 @@ class SentimentStore:
         with self._lock:
             return sorted(self._data.keys())
 
+    def clear(self) -> None:
+        """Drop everything - the store is a materialized view of the
+        sentiment-results topic, so it must be emptied when that topic is
+        (pipeline reset), or the chart keeps showing pre-reset windows."""
+        with self._lock:
+            self._data.clear()
+
 
 # A single shared store instance used by both the API and the consumer.
 store = SentimentStore()

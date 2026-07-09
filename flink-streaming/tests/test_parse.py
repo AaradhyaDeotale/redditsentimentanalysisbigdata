@@ -59,6 +59,7 @@ def test_cleaned_record_schema():
     cleaned = build_cleaned_record(record, TextCleaner())
     assert set(cleaned.keys()) == {
         "id",
+        "author",
         "created_utc",
         "subreddit",
         "original_body",
@@ -66,6 +67,7 @@ def test_cleaned_record_schema():
         "tokens",
         "score",
         "controversiality",
+        "language",
     }
     assert "🔥" in cleaned["original_body"]
     assert "https://" not in cleaned["cleaned_body"]

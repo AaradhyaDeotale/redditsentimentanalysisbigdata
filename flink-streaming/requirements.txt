@@ -7,6 +7,10 @@ langdetect==1.0.9
 # Preprocessing
 nltk==3.9.1
 
+# Trending distinctiveness weighting (Zipf word frequencies for TF-IDF-style
+# scoring); optional at runtime - without it trending ranks by raw count
+wordfreq==3.1.1
+
 # Output validation script
 confluent-kafka==2.3.0
 
