@@ -19,6 +19,8 @@ services:
       KAFKA_STARTING_OFFSET: earliest
       KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
       KEYWORD_FILTER: apple,android
+      SUBKEYWORDS: "apple:technology,fruit"
+      W2V_MODEL_PATH: "/models/word2vec_subset/word2vec.model"
       WINDOW_SIZE_SEC: "${WINDOW_SIZE_SEC:-60}"
       FLINK_JOB_NAME: reddit-comment-preprocessor
       FLINK_PARALLELISM: "${FLINK_PARALLELISM:-2}"
@@ -61,6 +63,8 @@ services:
       KAFKA_STARTING_OFFSET: earliest
       KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
       KEYWORD_FILTER: apple,android
+      SUBKEYWORDS: "apple:technology,fruit"
+      W2V_MODEL_PATH: "/models/word2vec_subset/word2vec.model"
       WINDOW_SIZE_SEC: "${WINDOW_SIZE_SEC:-60}"
       FLINK_JOB_NAME: reddit-comment-preprocessor
       FLINK_PARALLELISM: "${FLINK_PARALLELISM:-2}"
@@ -103,6 +107,8 @@ services:
       KAFKA_STARTING_OFFSET: earliest
       KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
       KEYWORD_FILTER: apple,android
+      SUBKEYWORDS: "apple:technology,fruit"
+      W2V_MODEL_PATH: "/models/word2vec_subset/word2vec.model"
       WINDOW_SIZE_SEC: "${WINDOW_SIZE_SEC:-60}"
       FLINK_JOB_NAME: reddit-comment-preprocessor
       FLINK_PARALLELISM: "${FLINK_PARALLELISM:-2}"
@@ -121,6 +127,7 @@ services:
       BATCH_MAX_MS: "${BATCH_MAX_MS:-200}"
     volumes:
       - ../output:/opt/flink/output
+      - ../../ml-model/models:/models
     command:
       - bash
       - -c
