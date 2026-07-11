@@ -35,6 +35,7 @@ from .comment_store import comment_buffer, snippet_around
 from .consumer import data_mode, set_sinks, start_background_consumer
 from .keywords import registry as keyword_registry
 from .store import store
+from .subkeywords import registry as subkeyword_registry
 from .ws_hub import hub
 
 load_dotenv()
@@ -98,9 +99,30 @@ def keywords_add(body: dict = Body(default={})):
 def keywords_remove(keyword: str):
     """Stop tracking a keyword (its stored history is kept)."""
     try:
-        return {"keywords": keyword_registry.remove(keyword)}
+        result = keyword_registry.remove(keyword)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    subkeyword_registry.remove_keyword(keyword)  # drop orphaned sub-keywords
+    return {"keywords": result}
+
+
+@app.get("/api/keywords/{keyword}/subkeywords")
+def subkeywords_get(keyword: str):
+    """Sub-keywords configured for a tracked keyword (empty if none set)."""
+    try:
+        return {"subkeywords": subkeyword_registry.get(keyword)}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.put("/api/keywords/{keyword}/subkeywords")
+def subkeywords_set(keyword: str, body: dict = Body(default={})):
+    """Replace a keyword's sub-keyword list; Stage 3 (Flink) will read this."""
+    try:
+        subs = subkeyword_registry.set(keyword, body.get("subkeywords", []))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"subkeywords": subs}
 
 
 @app.get("/api/sentiment")
