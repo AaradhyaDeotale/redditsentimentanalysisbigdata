@@ -42,8 +42,26 @@ export default function SentimentTab({ sel, setSel }) {
   // Defaults come from the server (not a hardcoded apple/android), so a refresh
   // reflects what's actually tracked.
   const { kw1, kw2, active } = sel;
-  const setKw1 = useCallback((v) => setSel((s) => ({ ...s, kw1: v })), [setSel]);
-  const setKw2 = useCallback((v) => setSel((s) => ({ ...s, kw2: v })), [setSel]);
+  // Picking a keyword applies the comparison immediately (chart, feed and
+  // trends all follow) - the Compare button remains for muscle memory.
+  const setKw1 = useCallback(
+    (v) =>
+      setSel((s) => {
+        const a = v.trim().toLowerCase();
+        const b = (s.kw2 || "").trim().toLowerCase();
+        return { ...s, kw1: v, active: a && b ? [a, b] : s.active };
+      }),
+    [setSel],
+  );
+  const setKw2 = useCallback(
+    (v) =>
+      setSel((s) => {
+        const a = (s.kw1 || "").trim().toLowerCase();
+        const b = v.trim().toLowerCase();
+        return { ...s, kw2: v, active: a && b ? [a, b] : s.active };
+      }),
+    [setSel],
+  );
   const [tracked, setTracked] = useState([]);
   const [state, setState] = useState(initialState);
   const [error, setError] = useState(null);

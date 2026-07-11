@@ -33,7 +33,7 @@ from flink_job.operators.keyword_filter import (
 )
 from flink_job.operators.sentiment_placeholder import NullSentimentScorer
 from flink_job.preprocessing.cleaner import TextCleaner
-from flink_job.preprocessing.language_detector import detect_language, is_supported_language
+from flink_job.preprocessing.language_detector import is_english
 from flink_job.preprocessing.tokenizer import tokenize
 
 VALID_COMMENT = {
@@ -147,23 +147,21 @@ class TestCleaner:
         assert cleaner.clean("") == ""
 
 
-class TestLanguageDetection:
-    def test_english_detected(self):
-        lang = detect_language("This is a great product I really love using it every day")
-        assert lang == "en"
+class TestEnglishGate:
+    def test_english_kept(self):
+        assert is_english("This is a great product I really love using it every day")
 
-    def test_short_text_unknown(self):
-        assert detect_language("hi") == "unknown"
+    def test_dutch_dropped(self):
+        pytest.importorskip("langdetect")
+        assert not is_english(
+            "Ik heb gisteren een nieuwe telefoon gekocht en hij werkt echt geweldig"
+        )
 
-    def test_empty_string_unknown(self):
-        assert detect_language("") == "unknown"
+    def test_short_text_kept(self):
+        assert is_english("hi")  # too short to judge - benefit of the doubt
 
-    def test_supported_languages(self):
-        assert is_supported_language("en")
-        assert is_supported_language("de")
-        assert is_supported_language("fr")
-        assert not is_supported_language("xx")
-        assert not is_supported_language("unknown")
+    def test_empty_string_kept(self):
+        assert is_english("")
 
 
 class TestTokenizer:
@@ -173,14 +171,9 @@ class TestTokenizer:
         assert "world" in tokens
 
     def test_stopwords_english(self):
-        tokens = tokenize("the quick brown fox", remove_stopwords=True, language="en")
+        tokens = tokenize("the quick brown fox", remove_stopwords=True)
         assert "the" not in tokens
         assert "quick" in tokens
-
-    def test_stopwords_german(self):
-        tokens = tokenize("der schnelle braune Fuchs", remove_stopwords=True, language="de")
-        assert "der" not in tokens
-        assert "schnelle" in tokens
 
     def test_no_stopwords_by_default(self):
         tokens = tokenize("the quick brown fox", remove_stopwords=False)
@@ -357,8 +350,8 @@ class TestCleanedRecordSchema:
         cleaned = build_cleaned_record(record, cleaner)
         expected_keys = {
             "id", "author", "created_utc", "subreddit",
-            "language", "original_body", "cleaned_body",
-            "tokens", "score", "controversiality",
+            "original_body", "cleaned_body",
+            "tokens", "score", "controversiality", "language",
         }
         assert set(cleaned.keys()) == expected_keys
 
@@ -367,11 +360,13 @@ class TestCleanedRecordSchema:
         cleaned = build_cleaned_record(record, cleaner)
         assert cleaned["author"] == "user1"
 
-    def test_language_field_present(self, cleaner):
+    def test_non_english_comment_dropped(self, cleaner):
+        pytest.importorskip("langdetect")
         record, _ = parse_comment_payload(json.dumps(VALID_COMMENT, ensure_ascii=False))
-        cleaned = build_cleaned_record(record, cleaner)
-        assert "language" in cleaned
-        assert isinstance(cleaned["language"], str)
+        record["body"] = (
+            "Ik heb gisteren een nieuwe telefoon gekocht en hij werkt echt geweldig"
+        )
+        assert build_cleaned_record(record, cleaner) is None
 
     def test_tokens_is_list(self, cleaner):
         record, _ = parse_comment_payload(json.dumps(VALID_COMMENT, ensure_ascii=False))

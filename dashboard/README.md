@@ -63,16 +63,17 @@ dashboard/
 ├── frontend/                 # React + Vite + Tailwind SPA
 │   ├── src/
 │   │   ├── App.jsx           # tab shell + LIVE/MOCK badge
-│   │   ├── tabs/             # Sentiment / Kafka / Flink / Overview
+│   │   ├── tabs/             # Sentiment / Trends / Kafka / Flink / Overview
 │   │   ├── components/       # cards, chart, feed, panels
 │   │   └── lib/              # useWebSocket, usePoll, api, message reducer
 │   └── vite.config.js        # base=/static/, build → ../src/web, dev proxy
 ├── src/
 │   ├── main.py               # FastAPI app: REST + /ws + serves the SPA
-│   ├── consumer.py           # two Kafka consumers (+ mock mode) + broadcast sinks
+│   ├── consumer.py           # three Kafka consumers (+ mock mode) + broadcast sinks
 │   ├── ws_hub.py             # thread→async bridge, subscription fan-out
 │   ├── ratelimit.py          # per-keyword token bucket for the comment feed
 │   ├── store.py              # in-memory window store, keyed by keyword
+│   ├── analytics_store.py    # sketch analytics (trending + reach) for the Trends tab
 │   ├── comment_store.py      # bounded recent-comment buffer, keyed by keyword
 │   ├── kafka_admin.py        # Kafka introspection for the Kafka tab
 │   ├── flink_proxy.py        # Flink REST proxy for the Flink tab
@@ -114,7 +115,7 @@ USE_MOCK_DATA=false uvicorn src.main:app --host 0.0.0.0 --port 8000
 ```
 
 Key env vars (see `.env.example`): `KAFKA_BROKER`, `KAFKA_TOPIC`,
-`KAFKA_COMMENTS_TOPIC`, `FLINK_API_URL`.
+`KAFKA_COMMENTS_TOPIC`, `KAFKA_ANALYTICS_TOPIC`, `FLINK_API_URL`.
 
 ---
 
@@ -142,6 +143,8 @@ It joins the external `bd_streaming` network and reaches Kafka at
 | GET | `/api/compare?keyword1=&keyword2=` | window time series for two keywords |
 | GET | `/api/timeseries?keyword=` | window time series for one keyword |
 | GET | `/api/comments?keyword=&limit=` | recent scored comments (feed backfill) |
+| GET | `/api/trending` | trending words + phrases around the *currently tracked* keywords, with window-over-window momentum (Count-Min Sketch, Trends tab) |
+| GET | `/api/reach[?keyword=]` | approx. unique authors per keyword (HyperLogLog); with `keyword`, its history |
 | GET | `/api/kafka/overview`,`/topics`,`/groups` | Kafka introspection |
 | GET | `/api/flink/overview`,`/jobs`,`/jobs/{id}` | Flink JobManager proxy |
 | WS  | `/ws` | live plane — send `{"subscribe":[...]}`, receive `window`/`comment` messages |

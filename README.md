@@ -56,6 +56,7 @@ flowchart LR
     TCLEAN[(reddit-comments-cleaned)]
     TMAL[(reddit-comments-malformed)]
     TRES[(sentiment-results)]
+    TANA[(analytics-results)]
   end
 
   subgraph P3 [P3 - flink-streaming]
@@ -64,7 +65,9 @@ flowchart LR
     KW[keyword filter]
     ML[sentiment ML scorer]
     WIN[window aggregation]
+    SKETCH[probabilistic sketches CMS + HLL]
     SRC --> PARSE --> KW --> ML --> WIN
+    ML --> SKETCH
   end
 
   subgraph P4 [P4 - ml-model]
@@ -84,9 +87,11 @@ flowchart LR
   PARSE -- bad records --> TMAL
   ML -- cleaned + scored --> TCLEAN
   WIN --> TRES
+  SKETCH --> TANA
   STORE -. loads/hot-reloads .-> ML
   TRES --> API
   TCLEAN --> API
+  TANA --> API
   REDIS <-. tracked keywords .-> ML
   REDIS <-. tracked keywords .-> API
   CTRL -. start/stop/reset .-> PROD
@@ -100,20 +105,24 @@ flowchart LR
    `created_utc` order, at a configurable replay speed.
 2. **Kafka** (3 brokers, KRaft mode) is the backbone connecting every other
    component. Topics: `reddit-comments` → `reddit-comments-cleaned` /
-   `reddit-comments-malformed` → `sentiment-results`.
+   `reddit-comments-malformed` → `sentiment-results` / `analytics-results`.
 3. **flink-streaming** consumes raw comments, strips URLs/markdown,
    tokenizes (emoji-safe), detects language, tags each comment with any
    matched keywords, scores sentiment using the trained model from
    **ml-model**, and aggregates results into per-keyword tumbling
-   event-time windows.
+   event-time windows. A side pipeline of **probabilistic sketches**
+   (Count-Min for trending words/phrases per tracked keyword, HyperLogLog
+   for distinct authors per keyword) summarizes the stream in fixed memory
+   into `analytics-results`.
 4. **ml-model** is trained offline (VADER lexicon labels a corpus, then a
    real classifier - TF-IDF/Word2Vec features + scikit-learn - is trained
    on those labels). The versioned model store is mounted into the Flink
    containers; the scorer hot-reloads new versions without a restart.
-5. **dashboard** consumes `sentiment-results` (aggregated windows) and
-   `reddit-comments-cleaned` (individual comments) and serves both a REST/
-   WebSocket API and a React SPA with live charts, a comment feed, and
-   Kafka/Flink health monitoring tabs.
+5. **dashboard** consumes `sentiment-results` (aggregated windows),
+   `reddit-comments-cleaned` (individual comments) and `analytics-results`
+   (sketch summaries) and serves both a REST/WebSocket API and a React SPA
+   with live charts, a comment feed, a Trends tab (trending terms with
+   momentum + author reach), and Kafka/Flink health monitoring tabs.
 6. **Redis** holds the live, shared set of tracked keywords (used by both
    the Flink job and the dashboard) so keywords can be added/removed at
    runtime without restarting the pipeline.
@@ -326,7 +335,7 @@ and must stay consistent:
 | `KAFKA_BROKER` | Kafka bootstrap servers | `kafka-1:9094,kafka-2:9094,kafka-3:9094` | `localhost:9092,localhost:9095,localhost:9096` |
 | `REDIS_URL` | Shared live-keyword set | `redis://redis:6379/0` | `redis://localhost:6379/0` |
 | `FLINK_API_URL` | Flink JobManager REST API | `http://jobmanager:8081` | `http://localhost:8081` |
-| Topic names | `reddit-comments`, `reddit-comments-cleaned`, `reddit-comments-malformed`, `sentiment-results` | same across every component | same |
+| Topic names | `reddit-comments`, `reddit-comments-cleaned`, `reddit-comments-malformed`, `sentiment-results`, `analytics-results` | same across every component | same |
 
 Copy each `.env.example` to `.env` in its folder and adjust as needed;
 `.env` files are git-ignored.
@@ -357,6 +366,7 @@ cd dashboard       && USE_MOCK_DATA=true pytest -v && cd frontend && npx vitest 
 | `http://localhost:8081` connection refused | `docker ps` - `flink-jobmanager` must be **Up**; check `docker logs flink-jobmanager` |
 | No messages on `reddit-comments-cleaned` | Producer may have run before the Flink job was RUNNING; re-run it, or set `KAFKA_STARTING_OFFSET=earliest` |
 | No messages on `sentiment-results` | Comments must match `KEYWORD_FILTER` **and** have a `sentiment_label`; windows are event-time - wait for the watermark or lower `WINDOW_SIZE_SEC` |
+| Added a keyword, comments flow, but the Trends tab / sentiment graph never show it | You replayed a slice of the dump the pipeline had already processed. Its `created_utc` timestamps are **behind Flink's event-time watermark**, so every windowed operator drops the records as *late* (the unwindowed comment feed still shows them). The Trends tab and control panel warn when this happens. Fix: **Reset pipeline** in the control panel (fresh watermark + cleared topics), then replay - the new job re-windows the data with the current keyword set |
 | `sentiment_status: no_model_available` | Train a model in `ml-model` (see Quick start step 2) - the scorer hot-reloads once a model appears under the mounted `MODEL_DIR` |
 
 Full per-component troubleshooting tables live in each subfolder's README.

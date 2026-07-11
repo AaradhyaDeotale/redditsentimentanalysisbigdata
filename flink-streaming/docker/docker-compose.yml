@@ -19,7 +19,13 @@ services:
       KAFKA_STARTING_OFFSET: earliest
       KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
       KEYWORD_FILTER: apple,android
+      SUBKEYWORDS: "apple:technology,fruit"
+      W2V_MODEL_PATH: "/models/word2vec_subset/word2vec.model"
       WINDOW_SIZE_SEC: "${WINDOW_SIZE_SEC:-60}"
+      # Trends aggregate over longer windows than the sentiment graph: sparse
+      # keywords need time to reach TRENDING_MIN_TOKENS, and 60s trending is
+      # noise. 300s of EVENT time (5 dump-minutes, not wall clock).
+      ANALYTICS_WINDOW_SEC: "${ANALYTICS_WINDOW_SEC:-300}"
       FLINK_JOB_NAME: reddit-comment-preprocessor
       FLINK_PARALLELISM: "${FLINK_PARALLELISM:-2}"
       FLINK_CHECKPOINT_INTERVAL_MS: "60000"
@@ -61,7 +67,13 @@ services:
       KAFKA_STARTING_OFFSET: earliest
       KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
       KEYWORD_FILTER: apple,android
+      SUBKEYWORDS: "apple:technology,fruit"
+      W2V_MODEL_PATH: "/models/word2vec_subset/word2vec.model"
       WINDOW_SIZE_SEC: "${WINDOW_SIZE_SEC:-60}"
+      # Trends aggregate over longer windows than the sentiment graph: sparse
+      # keywords need time to reach TRENDING_MIN_TOKENS, and 60s trending is
+      # noise. 300s of EVENT time (5 dump-minutes, not wall clock).
+      ANALYTICS_WINDOW_SEC: "${ANALYTICS_WINDOW_SEC:-300}"
       FLINK_JOB_NAME: reddit-comment-preprocessor
       FLINK_PARALLELISM: "${FLINK_PARALLELISM:-2}"
       FLINK_CHECKPOINT_INTERVAL_MS: "60000"
@@ -103,7 +115,13 @@ services:
       KAFKA_STARTING_OFFSET: earliest
       KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
       KEYWORD_FILTER: apple,android
+      SUBKEYWORDS: "apple:technology,fruit"
+      W2V_MODEL_PATH: "/models/word2vec_subset/word2vec.model"
       WINDOW_SIZE_SEC: "${WINDOW_SIZE_SEC:-60}"
+      # Trends aggregate over longer windows than the sentiment graph: sparse
+      # keywords need time to reach TRENDING_MIN_TOKENS, and 60s trending is
+      # noise. 300s of EVENT time (5 dump-minutes, not wall clock).
+      ANALYTICS_WINDOW_SEC: "${ANALYTICS_WINDOW_SEC:-300}"
       FLINK_JOB_NAME: reddit-comment-preprocessor
       FLINK_PARALLELISM: "${FLINK_PARALLELISM:-2}"
       FLINK_CHECKPOINT_INTERVAL_MS: "60000"
@@ -121,6 +139,7 @@ services:
       BATCH_MAX_MS: "${BATCH_MAX_MS:-200}"
     volumes:
       - ../output:/opt/flink/output
+      - ../../ml-model/models:/models
     command:
       - bash
       - -c
