@@ -97,3 +97,28 @@ export function mergeSeries(namedSeries) {
       positive_ratio: r.comment_count ? r.weighted / r.comment_count : 0,
     }));
 }
+
+// Narrows a keyword's named sense series (from seriesForBase) down to the
+// chosen sense, for the sense-filter chart view. "all" (or falsy) is a no-op
+// so the chart shows every resolved sense, same as today.
+export function filterSeriesBySense(namedSeries, sense) {
+  if (!sense || sense === "all") return namedSeries;
+  return namedSeries.filter((s) => s.sense === sense);
+}
+
+// Narrows the live comment feed to comments matching at least one of
+// `keywords`, honoring a per-keyword sense filter. senseFilters is
+// { [keyword]: selectedSense }; a keyword with no entry (or "all") behaves
+// like today - any comment matching that keyword counts, regardless of sense.
+export function filterCommentsBySense(comments, keywords, senseFilters = {}) {
+  const active = keywords.map((k) => String(k).toLowerCase());
+  return comments.filter((c) =>
+    (c.matched_keywords || []).some((kRaw) => {
+      const k = String(kRaw).toLowerCase();
+      if (!active.includes(k)) return false;
+      const filter = senseFilters[k];
+      if (!filter || filter === "all") return true;
+      return c.keyword_senses?.[k] === filter;
+    }),
+  );
+}
