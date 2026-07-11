@@ -3,6 +3,8 @@ import {
   bucketPoints,
   bucketCommentsBySentiment,
   buildSentimentChartRows,
+  headlineStat,
+  scatterSeries,
 } from "./aggregate.js";
 
 const pt = (end, ratio, count) => ({
@@ -73,6 +75,58 @@ describe("bucketCommentsBySentiment", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].window_end).toBe(60);
     expect(rows[0]).toMatchObject({ positive: 1, negative: 1, neutral: 0 });
+  });
+});
+
+describe("headlineStat", () => {
+  it("returns null for empty input", () => {
+    expect(headlineStat([], 60)).toBeNull();
+  });
+
+  it("uses the last bucket's weighted %, count, and delta vs the previous bucket", () => {
+    // Two 1-min windows in the [0,300) bucket, one in [300,600).
+    const points = [pt(60, 0.2, 10), pt(120, 0.8, 30), pt(360, 1.0, 5)];
+    const s = headlineStat(points, 300);
+    // Last bucket: 1.0 over 5 comments. Previous: (0.2*10+0.8*30)/40 = 0.65.
+    expect(s.pct).toBe(100);
+    expect(s.count).toBe(5);
+    expect(s.deltaPct).toBe(35);
+  });
+
+  it("has a null delta when only one bucket exists", () => {
+    expect(headlineStat([pt(60, 0.5, 4)], 300).deltaPct).toBeNull();
+  });
+});
+
+describe("scatterSeries", () => {
+  const c = (utc, kw, score, label) => ({
+    created_utc: utc,
+    matched_keywords: [kw],
+    sentiment_score: score,
+    sentiment_label: label,
+  });
+
+  it("signs the unsigned confidence by label, sorted by time", () => {
+    // sentiment_score is a 0..1 magnitude; the label carries the direction.
+    const pts = scatterSeries(
+      [
+        c(70, "apple", 0.8, "positive"),
+        c(60, "apple", 0.449, "negative"),
+        c(80, "android", 0.5, "positive"),
+      ],
+      "apple",
+    );
+    expect(pts.map((p) => p.t)).toEqual([60, 70]);
+    expect(pts[0]).toMatchObject({ score: -0.449, label: "negative" });
+    expect(pts[1]).toMatchObject({ score: 0.8, label: "positive" });
+  });
+
+  it("plots neutral comments on the zero line", () => {
+    expect(scatterSeries([c(10, "apple", 0.9, "neutral")], "apple")[0].score).toBe(0);
+  });
+
+  it("skips comments with a non-numeric score", () => {
+    expect(scatterSeries([c(10, "apple", null, "neutral")], "apple")).toEqual([]);
   });
 });
 

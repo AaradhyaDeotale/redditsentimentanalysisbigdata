@@ -22,7 +22,7 @@ services:
       KAFKA_AUTO_OFFSET_RESET: earliest
       KAFKA_COMMENTS_TOPIC: reddit-comments-cleaned
       KAFKA_COMMENTS_GROUP_ID: dashboard-comments
-      KAFKA_COMMENTS_OFFSET_RESET: latest
+      KAFKA_COMMENTS_OFFSET_RESET: earliest   # replay the backlog into the feed
       FLINK_API_URL: http://jobmanager:8081
       # tracked-keyword set lives in Redis (same instance the Flink job reads);
       # without this the registry silently degrades to in-memory and keyword

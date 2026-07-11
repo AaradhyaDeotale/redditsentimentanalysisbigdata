@@ -1,0 +1,19 @@
+# Backend dev image: Python dependencies only.
+#
+# Unlike docker/Dockerfile (production), this does NOT build the SPA or copy the
+# app code in. The source is bind-mounted at runtime and uvicorn --reload picks
+# up edits live. The React app is served separately by the vite dev container.
+#
+#   docker compose -f docker/docker-compose.dev.yml up --build
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+EXPOSE 8000
+
+# --reload watches the bind-mounted src/; WATCHFILES_FORCE_POLLING (set in the
+# compose env) makes it fire across the macOS<->Linux mount.
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

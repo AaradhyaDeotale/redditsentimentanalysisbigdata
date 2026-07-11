@@ -47,7 +47,7 @@ from flink_job.operators.late_data import (
 from flink_job.operators.parse import MALFORMED_TAG, ParseCommentFunction
 from flink_job.operators.sentiment_placeholder import SentimentPlaceholderFunction
 from flink_job.sources.kafka_io import build_kafka_sink, build_kafka_source
-from flink_job.operators.sentiment_ml import SentimentMLBatchFunction
+from flink_job.operators.sentiment_ml import SentimentMLFunction
 from flink_job.operators.sentiment_window import KeywordFanoutFunction, SentimentWindowFunction
 from flink_job.operators.sketches import (
     AuthorFanoutFunction,
@@ -125,11 +125,17 @@ def build_pipeline(env: StreamExecutionEnvironment, settings: AppSettings) -> No
         .name("keyword-filter")
     )
 
-    # Stage 4: Sentiment ML - micro-batched scoring with optional Redis cache
+    # Stage 4: Sentiment ML - score each comment as it arrives (1 output per
+    # input). This is a plain map, not a micro-batch buffer: the buffered version
+    # could strand its last partial batch at end-of-stream (a bounded replay has
+    # no next record to flush it, and a FlatMapFunction can't emit from close()),
+    # silently dropping the most recent comments. Per-record scoring can't lose a
+    # tail. The model call is already fast (cached, vectorised internally), so the
+    # batch was buying little here.
     sentiment_stream = (
         keyword_stream
-        .flat_map(SentimentMLBatchFunction(), output_type=Types.PICKLED_BYTE_ARRAY())
-        .name("sentiment-ml-batch")
+        .map(SentimentMLFunction(), output_type=Types.PICKLED_BYTE_ARRAY())
+        .name("sentiment-ml")
     )
 
     # Stage 5: Assign event-time watermarks from created_utc
