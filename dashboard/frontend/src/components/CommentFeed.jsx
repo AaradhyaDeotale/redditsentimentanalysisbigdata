@@ -1,3 +1,5 @@
+import { filterCommentsBySense } from "../lib/messages.js";
+
 function scoreColor(label) {
   if (label === "positive") return "text-pos";
   if (label === "negative") return "text-neg";
@@ -51,12 +53,11 @@ function CommentRow({ c }) {
   );
 }
 
-// Live-scrolling feed of scored comments relevant to the selected keywords.
-export default function CommentFeed({ comments, keywords }) {
-  const set = new Set(keywords.map((k) => k.toLowerCase()));
-  const visible = comments.filter((c) =>
-    (c.matched_keywords || []).some((k) => set.has(String(k).toLowerCase())),
-  );
+// Live-scrolling feed of scored comments relevant to the selected keywords,
+// narrowed further by senseFilters ({ [keyword]: selectedSense }) when a
+// per-keyword sense chip is active.
+export default function CommentFeed({ comments, keywords, senseFilters }) {
+  const visible = filterCommentsBySense(comments, keywords, senseFilters);
 
   return (
     <div className="flex h-full flex-col rounded-xl border border-edge bg-card p-4">

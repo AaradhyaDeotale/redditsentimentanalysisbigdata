@@ -3,6 +3,7 @@ import { getCompare, getComments } from "../lib/api.js";
 import { useWebSocket } from "../lib/useWebSocket.js";
 import {
   applyMessage,
+  filterSeriesBySense,
   initialState,
   MAX_COMMENTS,
   MAX_POINTS,
@@ -19,6 +20,7 @@ import SentimentChart from "../components/SentimentChart.jsx";
 import SentimentScatter from "../components/SentimentScatter.jsx";
 import CommentFeed from "../components/CommentFeed.jsx";
 import TrackedKeywords from "../components/TrackedKeywords.jsx";
+import SenseFilter from "../components/SenseFilter.jsx";
 
 const toPoints = (pts) =>
   (pts || [])
@@ -69,6 +71,10 @@ export default function SentimentTab({ sel, setSel }) {
   const [range, setRange] = useState(null); // { start, end } unix seconds from drag-select, or null
   const [bucketSeconds, setBucketSeconds] = useState(DEFAULT_BUCKET_SECONDS); // chart aggregation granularity
   const [chartView, setChartView] = useState("line"); // "line" (windowed) | "scatter" (per comment)
+  // Per-keyword sense filter ("all" or a specific sense e.g. "fruit") - pure
+  // view state, narrows the chart lines + comment feed without refetching.
+  const [senseFilterA, setSenseFilterA] = useState("all");
+  const [senseFilterB, setSenseFilterB] = useState("all");
 
   // Seed the selection from the tracked set the first time it arrives (only if
   // nothing is selected yet - don't clobber a choice the user already made).
@@ -99,6 +105,8 @@ export default function SentimentTab({ sel, setSel }) {
     setState(initialState);
     setError(null);
     setRange(null);
+    setSenseFilterA("all");
+    setSenseFilterB("all");
     (async () => {
       try {
         const [cmp, c1, c2] = await Promise.all([
@@ -147,6 +155,16 @@ export default function SentimentTab({ sel, setSel }) {
   const namedB = seriesForBase(state.windows, b);
   const seriesA = mergeSeries(namedA);
   const seriesB = mergeSeries(namedB);
+
+  // Sense filter: which senses each keyword has actually resolved into so
+  // far (derived from the data, not hardcoded) - the chip row for a keyword
+  // only renders when this is non-empty. Chart lines narrow to the selected
+  // sense; bars stay sense-agnostic total volume, unchanged.
+  const sensesA = [...new Set(namedA.map((s) => s.sense).filter(Boolean))];
+  const sensesB = [...new Set(namedB.map((s) => s.sense).filter(Boolean))];
+  const filteredNamedA = filterSeriesBySense(namedA, senseFilterA);
+  const filteredNamedB = filterSeriesBySense(namedB, senseFilterB);
+  const senseFilters = { [a]: senseFilterA, [b]: senseFilterB };
 
   // When a time range is selected via drag, narrow the stat cards and comment
   // feed to it; the chart itself always sees the full series (it just zooms).
@@ -221,6 +239,27 @@ export default function SentimentTab({ sel, setSel }) {
             />
           </div>
 
+          {(sensesA.length > 0 || sensesB.length > 0) && (
+            <div className="flex flex-wrap gap-x-6 gap-y-2">
+              <SenseFilter
+                keyword={a}
+                senses={sensesA}
+                value={senseFilterA}
+                onChange={setSenseFilterA}
+                accentClass="text-accent"
+                activeBgClass="bg-accent"
+              />
+              <SenseFilter
+                keyword={b}
+                senses={sensesB}
+                value={senseFilterB}
+                onChange={setSenseFilterB}
+                accentClass="text-accent2"
+                activeBgClass="bg-accent2"
+              />
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <div className="space-y-2 lg:col-span-2">
               <div className="flex items-center gap-1 text-xs">
@@ -249,8 +288,8 @@ export default function SentimentTab({ sel, setSel }) {
                   b={b}
                   seriesA={seriesA}
                   seriesB={seriesB}
-                  namedA={namedA}
-                  namedB={namedB}
+                  namedA={filteredNamedA}
+                  namedB={filteredNamedB}
                   comments={state.comments}
                   bucketSeconds={bucketSeconds}
                   range={range}
@@ -261,7 +300,11 @@ export default function SentimentTab({ sel, setSel }) {
               )}
             </div>
             <div className="h-72 lg:h-auto">
-              <CommentFeed comments={rangedComments} keywords={active} />
+              <CommentFeed
+                comments={rangedComments}
+                keywords={active}
+                senseFilters={senseFilters}
+              />
             </div>
           </div>
         </>

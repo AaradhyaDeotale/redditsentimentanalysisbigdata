@@ -25,6 +25,24 @@ async function postJSON(url, body) {
   return res.json();
 }
 
+async function putJSON(url, body) {
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* keep status text */
+    }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
 const q = encodeURIComponent;
 
 export const getMeta = () => getJSON("/api/meta");
@@ -55,6 +73,13 @@ export const removeKeyword = (keyword) =>
     }
     return res.json();
   });
+
+// Per-keyword sub-keywords (staged): user-typed terms the Flink resolver will
+// classify a keyword's comments against once Stage 3 lands. Backend is Stage 2.
+export const getSubkeywords = (keyword) =>
+  getJSON(`/api/keywords/${q(keyword)}/subkeywords`);
+export const setSubkeywords = (keyword, subkeywords) =>
+  putJSON(`/api/keywords/${q(keyword)}/subkeywords`, { subkeywords });
 
 // Sketch analytics (P1): Count-Min trending tokens + HyperLogLog reach.
 // `keyword`: one keyword to scope to, or nothing to merge all tracked ones.

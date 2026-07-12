@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   applyMessage,
+  filterCommentsBySense,
+  filterSeriesBySense,
   initialState,
   mergeSeries,
   seriesForBase,
@@ -140,6 +142,92 @@ describe("mergeSeries", () => {
 
   it("returns an empty array for no series", () => {
     expect(mergeSeries([])).toEqual([]);
+  });
+});
+
+describe("filterSeriesBySense", () => {
+  const named = [
+    { key: "apple:company", base: "apple", sense: "company", points: [] },
+    { key: "apple:fruit", base: "apple", sense: "fruit", points: [] },
+    { key: "apple:ambiguous", base: "apple", sense: "ambiguous", points: [] },
+  ];
+
+  it("passes every series through when sense is 'all'", () => {
+    expect(filterSeriesBySense(named, "all")).toEqual(named);
+  });
+
+  it("passes every series through when sense is falsy", () => {
+    expect(filterSeriesBySense(named, null)).toEqual(named);
+    expect(filterSeriesBySense(named, undefined)).toEqual(named);
+  });
+
+  it("narrows to the exact matching sense", () => {
+    expect(filterSeriesBySense(named, "fruit")).toEqual([named[1]]);
+  });
+
+  it("treats 'ambiguous' as a normal, equal sense option", () => {
+    expect(filterSeriesBySense(named, "ambiguous")).toEqual([named[2]]);
+  });
+
+  it("returns an empty array when nothing matches", () => {
+    expect(filterSeriesBySense(named, "nope")).toEqual([]);
+  });
+});
+
+describe("filterCommentsBySense", () => {
+  const c = (id, kws, senses) => ({
+    id,
+    matched_keywords: kws,
+    keyword_senses: senses || {},
+  });
+
+  it("matches today's behavior when every filter is 'all'", () => {
+    const comments = [c("1", ["apple"], { apple: "fruit" }), c("2", ["android"])];
+    const result = filterCommentsBySense(comments, ["apple", "android"], {
+      apple: "all",
+      android: "all",
+    });
+    expect(result.map((x) => x.id)).toEqual(["1", "2"]);
+  });
+
+  it("defaults to 'all' behavior when senseFilters is omitted entirely", () => {
+    const comments = [c("1", ["apple"], { apple: "fruit" })];
+    expect(filterCommentsBySense(comments, ["apple"]).map((x) => x.id)).toEqual(["1"]);
+  });
+
+  it("keeps only comments whose keyword_senses matches the selected sense", () => {
+    const comments = [
+      c("fruit", ["apple"], { apple: "fruit" }),
+      c("company", ["apple"], { apple: "company" }),
+    ];
+    const result = filterCommentsBySense(comments, ["apple"], { apple: "fruit" });
+    expect(result.map((x) => x.id)).toEqual(["fruit"]);
+  });
+
+  it("excludes a comment missing a keyword_senses entry for the filtered keyword", () => {
+    const comments = [c("no-sense", ["apple"], {})];
+    const result = filterCommentsBySense(comments, ["apple"], { apple: "fruit" });
+    expect(result).toEqual([]);
+  });
+
+  it("ORs across two independently-filtered keywords", () => {
+    const comments = [
+      c("a-fruit", ["apple"], { apple: "fruit" }),
+      c("a-company", ["apple"], { apple: "company" }),
+      c("b-only", ["android"]),
+    ];
+    // apple filtered to "fruit", android left at "all"
+    const result = filterCommentsBySense(comments, ["apple", "android"], {
+      apple: "fruit",
+      android: "all",
+    });
+    expect(result.map((x) => x.id).sort()).toEqual(["a-fruit", "b-only"]);
+  });
+
+  it("is case-insensitive on keyword matching, matching keyword_senses lookup by lowercase key", () => {
+    const comments = [c("1", ["Apple"], { apple: "fruit" })];
+    const result = filterCommentsBySense(comments, ["APPLE"], { apple: "fruit" });
+    expect(result.map((x) => x.id)).toEqual(["1"]);
   });
 });
 
