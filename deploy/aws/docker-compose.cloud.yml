@@ -1,0 +1,148 @@
+# Cloud compose — runs on the EC2 box. Same services as local, but the Kafka
+# brokers and Redis are gone (now managed MSK + ElastiCache). KAFKA_BROKER and
+# REDIS_URL come from the .env file the deploy script writes from Terraform
+# outputs. Lives at the project root on the EC2 so build contexts resolve.
+name: bd-reddit-cloud
+
+# Shared Flink env (JobManager + TaskManager use identical config)
+x-flink-env: &flink-env
+  KAFKA_BROKER: ${KAFKA_BROKER}
+  KAFKA_INPUT_TOPIC: reddit-comments
+  KAFKA_OUTPUT_TOPIC: reddit-comments-cleaned
+  KAFKA_MALFORMED_TOPIC: reddit-comments-malformed
+  KAFKA_STARTING_OFFSET: earliest
+  KAFKA_CONSUMER_GROUP: flink-reddit-preprocessor
+  KEYWORD_FILTER: apple,android
+  WINDOW_SIZE_SEC: "10"
+  FLINK_JOB_NAME: reddit-comment-preprocessor
+  FLINK_PARALLELISM: "2"
+  FLINK_CHECKPOINT_INTERVAL_MS: "60000"
+  WATERMARK_MAX_OUT_OF_ORDER_SEC: "5"
+  PREPROCESS_REMOVE_URLS: "1"
+  PREPROCESS_REMOVE_MARKDOWN: "1"
+  PREPROCESS_LOWERCASE: "0"
+  PREPROCESS_REMOVE_STOPWORDS: "0"
+  PREPROCESS_STEM: "0"
+  OUTPUT_SINK: kafka
+  LOG_LEVEL: INFO
+  REDIS_URL: ${REDIS_URL}
+  CACHE_TTL_SEC: "86400"
+  BATCH_MAX_SIZE: "256"
+  BATCH_MAX_MS: "200"
+
+services:
+  jobmanager:
+    build:
+      context: ./flink-streaming
+      dockerfile: docker/Dockerfile
+      additional_contexts:
+        mlmodel_src: ./ml-model
+    image: flink-reddit:1.18
+    command: jobmanager
+    ports:
+      - "8081:8081"
+    environment: *flink-env
+    volumes:
+      - flink-checkpoints:/opt/flink/checkpoints
+      - ./ml-model/models:/models
+    restart: unless-stopped
+
+  taskmanager:
+    build:
+      context: ./flink-streaming
+      dockerfile: docker/Dockerfile
+      additional_contexts:
+        mlmodel_src: ./ml-model
+    image: flink-reddit:1.18
+    command: taskmanager
+    depends_on:
+      - jobmanager
+    environment: *flink-env
+    volumes:
+      - flink-checkpoints:/opt/flink/checkpoints
+      - ./ml-model/models:/models
+    restart: unless-stopped
+
+  # Submits the PyFlink job to the cluster, then exits (this is normal).
+  # Waits for the JobManager to be ready first.
+  job-submitter:
+    image: flink-reddit:1.18
+    depends_on:
+      - jobmanager
+      - taskmanager
+    environment: *flink-env
+    volumes:
+      - ./ml-model/models:/models
+    command:
+      - bash
+      - -c
+      - sleep 25 && /opt/flink/bin/flink run -m jobmanager:8081 -py /opt/flink/usrlib/src/flink_job/main.py -d
+    restart: "no"
+
+  # Continuous retrainer: labels the live stream (VADER), retrains on a trigger,
+  # writes a NEW model version to the shared /models volume, and pings Flink to
+  # hot-swap it live. Watch it tick up:  docker compose logs -f retrainer
+  retrainer:
+    build:
+      context: ./ml-model
+      dockerfile: docker/Dockerfile
+    image: ml-model:latest
+    depends_on:
+      - jobmanager
+    environment:
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      KAFKA_COMMENTS_TOPIC: reddit-comments-cleaned
+      KAFKA_GROUP_ID: ml-retrainer
+      MODEL_DIR: /models
+      LABELED_CORPUS: /models/live_corpus.jsonl
+      RETRAIN_EVERY_N: "5000"
+      REDIS_URL: ${REDIS_URL}
+      LOG_LEVEL: INFO
+    entrypoint: ["python", "-m", "ml_model.retrain.retrain_service"]
+    volumes:
+      - ./ml-model/models:/models # shared with Flink → new versions are visible
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: docker/Dockerfile
+    image: sentiment-dashboard:latest
+    ports:
+      - "8000:8000"
+    environment:
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      KAFKA_TOPIC: sentiment-results
+      KAFKA_GROUP_ID: dashboard-consumer
+      KAFKA_AUTO_OFFSET_RESET: earliest
+      KAFKA_COMMENTS_TOPIC: reddit-comments-cleaned
+      KAFKA_COMMENTS_GROUP_ID: dashboard-comments
+      KAFKA_COMMENTS_OFFSET_RESET: latest
+      FLINK_API_URL: http://jobmanager:8081
+      USE_MOCK_DATA: "false"
+      CONTROL_ENABLED: "false"
+      # Shared Redis "whiteboard" for tracked keywords — the dashboard writes
+      # here and Flink reads it, so new keywords added in the UI reach the job.
+      REDIS_URL: ${REDIS_URL}
+    restart: unless-stopped
+
+  # Replays the data slice into Kafka once, fast. Runs to completion then stops.
+  producer:
+    build:
+      context: ./kafka-producer
+      dockerfile: docker/Dockerfile
+    image: reddit-producer:latest
+    depends_on:
+      - jobmanager
+    environment:
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      KAFKA_TOPIC: reddit-comments
+      ZST_FILE: /data/slice.zst
+      REPLAY_SPEED: "20"        # stream over ~3 min so the dashboard fills live
+      LIVE_TIMESTAMPS: "true"   # stamp comments as "now" so windows update live
+    volumes:
+      - ./deploy/data/RC_2019-04-slice.zst:/data/slice.zst:ro
+    restart: "no"
+
+volumes:
+  flink-checkpoints:
