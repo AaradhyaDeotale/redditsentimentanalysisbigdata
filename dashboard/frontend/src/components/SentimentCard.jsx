@@ -1,15 +1,25 @@
-// One keyword's headline: latest % positive, comment count, and a trend arrow
-// versus the previous window.
-export default function SentimentCard({ keyword, points, accentClass }) {
-  const last = points[points.length - 1];
-  const prev = points[points.length - 2];
-  const pct = last != null ? Math.round(last.positive_ratio * 100) : null;
-  const delta =
-    last && prev ? Math.round((last.positive_ratio - prev.positive_ratio) * 100) : 0;
+import { headlineStat } from "../lib/aggregate.js";
 
-  const arrow = delta > 0 ? "▲" : delta < 0 ? "▼" : "■";
+// One keyword's headline: % positive over the most recent bucket at the chart's
+// chosen granularity (so it isn't a lone 1-comment window reading 100%), the
+// sample size behind it, and a trend arrow versus the previous bucket.
+export default function SentimentCard({
+  keyword,
+  points,
+  bucketSeconds,
+  bucketLabel,
+  accentClass,
+}) {
+  const stat = headlineStat(points, bucketSeconds);
+  const delta = stat?.deltaPct ?? null;
+
+  const arrow = delta == null ? "" : delta > 0 ? "▲" : delta < 0 ? "▼" : "■";
   const arrowClass =
-    delta > 0 ? "text-pos" : delta < 0 ? "text-neg" : "text-muted";
+    delta == null || delta === 0
+      ? "text-muted"
+      : delta > 0
+        ? "text-pos"
+        : "text-neg";
 
   return (
     <div className="flex-1 rounded-xl border border-edge bg-card p-5">
@@ -17,19 +27,19 @@ export default function SentimentCard({ keyword, points, accentClass }) {
         {keyword || "—"}
       </div>
       <div className="mt-1.5 text-4xl font-bold">
-        {pct != null ? `${pct}%` : "--%"}
+        {stat ? `${stat.pct}%` : "--%"}
       </div>
       <div className="mt-1 flex items-center gap-2 text-xs text-muted">
         <span>positive</span>
-        {last && (
+        {stat && delta != null && (
           <span className={arrowClass}>
             {arrow} {Math.abs(delta)}%
           </span>
         )}
       </div>
       <div className="mt-0.5 text-xs text-muted">
-        {last
-          ? `${last.comment_count} comments in last window`
+        {stat
+          ? `${stat.count} comment${stat.count === 1 ? "" : "s"} · last ${bucketLabel}`
           : "waiting for data"}
       </div>
     </div>

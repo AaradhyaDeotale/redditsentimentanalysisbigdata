@@ -194,3 +194,57 @@ export function buildSentimentChartRows(
 
   return [...rows.values()].sort((x, y) => x.t - y.t);
 }
+
+/**
+ * Headline stat for a keyword's card: the % positive of the most recent bucket
+ * at the chart's chosen granularity (so a lone 1s window reading "100% from 1
+ * comment" becomes a count-weighted % over the whole bucket), its comment count,
+ * and the change versus the previous bucket. null when there is nothing to show.
+ */
+export function headlineStat(points, bucketSeconds) {
+  const bucketed = bucketPoints(points || [], bucketSeconds);
+  if (bucketed.length === 0) return null;
+  const last = bucketed[bucketed.length - 1];
+  const prev = bucketed[bucketed.length - 2];
+  return {
+    pct: Math.round(last.positive_ratio * 100),
+    count: last.comment_count,
+    deltaPct: prev
+      ? Math.round((last.positive_ratio - prev.positive_ratio) * 100)
+      : null,
+  };
+}
+
+/**
+ * One dot per scored comment matching `keyword`: x = created_utc, y = a signed
+ * sentiment in −1..+1. No aggregation — the "as it arrives" view.
+ *
+ * `sentiment_score` is an UNSIGNED confidence (0..1); the direction lives in
+ * `sentiment_label`, so we sign it here the same way the live feed does
+ * (negative → below zero, positive → above, neutral → on the line). Comments
+ * without a numeric score are skipped; output is sorted oldest-first.
+ */
+export function scatterSeries(comments, keyword) {
+  if (!comments?.length || !keyword) return [];
+  const kw = keyword.toLowerCase();
+  const out = [];
+  for (const c of comments) {
+    const matches = (c.matched_keywords || []).some(
+      (k) => String(k).toLowerCase() === kw,
+    );
+    if (!matches) continue;
+    if (c.sentiment_score == null) continue;
+    const mag = Math.abs(Number(c.sentiment_score));
+    if (!Number.isFinite(mag)) continue;
+    const label = c.sentiment_label;
+    const score = label === "negative" ? -mag : label === "positive" ? mag : 0;
+    out.push({
+      t: c.created_utc,
+      score,
+      label,
+      author: c.author,
+      body: c.body,
+    });
+  }
+  return out.sort((x, y) => x.t - y.t);
+}

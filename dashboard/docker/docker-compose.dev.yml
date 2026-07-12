@@ -1,0 +1,81 @@
+# Dashboard DEV stack (P5 P6) - hot-reloading backend + frontend.
+#
+# Backend  : uvicorn --reload, src/ bind-mounted    -> http://localhost:8000
+# Frontend : vite dev server,  frontend/ bind-mounted -> http://localhost:5173  (open this)
+#
+# Joins the shared bd_streaming network so it reaches Kafka / Redis / Flink by
+# service name. Start order: Kafka (creates the network) -> Flink -> this.
+#
+#   docker compose -f docker/docker-compose.dev.yml up --build
+#
+# Stop the locally-run `uvicorn` (:8000) and `vite` (:5173) first, or the ports
+# will clash.
+
+services:
+  dashboard-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    image: sentiment-dashboard-dev:latest
+    container_name: sentiment-dashboard-backend
+    mem_limit: 700m
+    ports:
+      - "8000:8000"
+    environment:
+      # in-network addresses (see kafka-producer / flink-streaming compose files)
+      KAFKA_BROKER: kafka-1:9094,kafka-2:9094,kafka-3:9094
+      KAFKA_TOPIC: sentiment-results
+      KAFKA_GROUP_ID: dashboard-consumer
+      KAFKA_AUTO_OFFSET_RESET: earliest
+      KAFKA_COMMENTS_TOPIC: reddit-comments-cleaned
+      KAFKA_COMMENTS_GROUP_ID: dashboard-comments
+      KAFKA_COMMENTS_OFFSET_RESET: earliest   # replay the backlog into the feed
+      FLINK_API_URL: http://jobmanager:8081
+      # tracked-keyword set lives in Redis (same instance the Flink job reads).
+      # In-network the hostname is `redis`, which resolves correctly here (the
+      # localhost:6379 trap only bites the host-run uvicorn).
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      USE_MOCK_DATA: "false"
+      CONTROL_ENABLED: "true"
+      # control.py producer subprocess config
+      PRODUCER_PYTHON: python3
+      KAFKA_INPUT_TOPIC: reddit-comments
+      # make uvicorn --reload fire across the macOS<->Linux bind mount
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      - ../src:/app/src                              # live backend code
+      - ../../kafka-producer:/kafka-producer:ro
+      - ../../RC_2019-04.zst:/RC_2019-04.zst:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - bd_streaming
+    restart: unless-stopped
+
+  dashboard-frontend:
+    image: node:20-slim
+    container_name: sentiment-dashboard-frontend
+    working_dir: /app/frontend
+    # install deps into the container's own node_modules volume, then serve
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"
+    environment:
+      # vite proxies /api and /ws to the backend service (not 127.0.0.1)
+      VITE_API_PROXY: http://dashboard-backend:8000
+      # enable filesystem polling so edits on the host trigger HMR
+      VITE_POLL: "1"
+    volumes:
+      - ../frontend:/app/frontend                    # live frontend code
+      - dashboard_node_modules:/app/frontend/node_modules  # container's own (linux) deps
+    networks:
+      - bd_streaming
+    depends_on:
+      - dashboard-backend
+    restart: unless-stopped
+
+volumes:
+  dashboard_node_modules:
+
+networks:
+  bd_streaming:
+    external: true

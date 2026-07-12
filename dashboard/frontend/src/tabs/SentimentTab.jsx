@@ -16,6 +16,7 @@ import {
 } from "../lib/aggregate.js";
 import SentimentCard from "../components/SentimentCard.jsx";
 import SentimentChart from "../components/SentimentChart.jsx";
+import SentimentScatter from "../components/SentimentScatter.jsx";
 import CommentFeed from "../components/CommentFeed.jsx";
 import TrackedKeywords from "../components/TrackedKeywords.jsx";
 
@@ -67,6 +68,7 @@ export default function SentimentTab({ sel, setSel }) {
   const [error, setError] = useState(null);
   const [range, setRange] = useState(null); // { start, end } unix seconds from drag-select, or null
   const [bucketSeconds, setBucketSeconds] = useState(DEFAULT_BUCKET_SECONDS); // chart aggregation granularity
+  const [chartView, setChartView] = useState("line"); // "line" (windowed) | "scatter" (per comment)
 
   // Seed the selection from the tracked set the first time it arrives (only if
   // nothing is selected yet - don't clobber a choice the user already made).
@@ -154,6 +156,9 @@ export default function SentimentTab({ sel, setSel }) {
   const rangedComments = range
     ? state.comments.filter((c) => inRange(c.created_utc))
     : state.comments;
+  const bucketLabel =
+    AGGREGATION_OPTIONS.find((o) => o.seconds === bucketSeconds)?.label ??
+    `${bucketSeconds}s`;
 
   return (
     <div className="space-y-5">
@@ -200,24 +205,60 @@ export default function SentimentTab({ sel, setSel }) {
       ) : (
         <>
           <div className="flex flex-wrap gap-4">
-            <SentimentCard keyword={a} points={rangedA} accentClass="text-accent" />
-            <SentimentCard keyword={b} points={rangedB} accentClass="text-accent2" />
+            <SentimentCard
+              keyword={a}
+              points={rangedA}
+              bucketSeconds={bucketSeconds}
+              bucketLabel={bucketLabel}
+              accentClass="text-accent"
+            />
+            <SentimentCard
+              keyword={b}
+              points={rangedB}
+              bucketSeconds={bucketSeconds}
+              bucketLabel={bucketLabel}
+              accentClass="text-accent2"
+            />
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <div className="lg:col-span-2">
-              <SentimentChart
-                a={a}
-                b={b}
-                seriesA={seriesA}
-                seriesB={seriesB}
-                namedA={namedA}
-                namedB={namedB}
-                comments={state.comments}
-                bucketSeconds={bucketSeconds}
-                range={range}
-                onRangeChange={setRange}
-              />
+            <div className="space-y-2 lg:col-span-2">
+              <div className="flex items-center gap-1 text-xs">
+                {[
+                  ["line", "Line"],
+                  ["scatter", "Scatter · per comment"],
+                ].map(([v, lbl]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setChartView(v)}
+                    className={
+                      "rounded-md px-2.5 py-1 " +
+                      (chartView === v
+                        ? "bg-accent text-bg"
+                        : "border border-edge text-muted hover:text-text")
+                    }
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+              {chartView === "line" ? (
+                <SentimentChart
+                  a={a}
+                  b={b}
+                  seriesA={seriesA}
+                  seriesB={seriesB}
+                  namedA={namedA}
+                  namedB={namedB}
+                  comments={state.comments}
+                  bucketSeconds={bucketSeconds}
+                  range={range}
+                  onRangeChange={setRange}
+                />
+              ) : (
+                <SentimentScatter a={a} b={b} comments={state.comments} />
+              )}
             </div>
             <div className="h-72 lg:h-auto">
               <CommentFeed comments={rangedComments} keywords={active} />

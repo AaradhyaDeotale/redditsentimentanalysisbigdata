@@ -1,0 +1,13 @@
+# Terraform working files — never commit these
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Contains your email; keep it local
+terraform.tfvars
+
+# SSH key for the EC2 box
+bd-key
+bd-key.pub

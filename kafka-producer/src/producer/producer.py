@@ -11,7 +11,6 @@ import json
 import logging
 import os
 import time
-from collections import defaultdict
 
 import zstandard as zstd
 from confluent_kafka import Producer
@@ -52,8 +51,14 @@ def delivery_report(err, msg):
 
 
 # ── Record filtering ──────────────────────────────────────────────────────────
-def parse_record(line: bytes) -> dict | None:
-    """Parse one JSON line; return filtered record or None."""
+def decode_line(line: bytes) -> dict | None:
+    """Decode one JSON line into a whitelisted record, WITHOUT date-filtering.
+
+    Returns None for malformed JSON, a bad/missing timestamp, or a
+    deleted/removed/empty body. The date-window check is intentionally left out
+    so the streaming reader can *see* a record's timestamp and stop once the
+    file has moved past the end of the window (see records_from_lines).
+    """
     try:
         record = json.loads(line)
     except json.JSONDecodeError:
@@ -65,9 +70,6 @@ def parse_record(line: bytes) -> dict | None:
             ts = int(ts)
         except (TypeError, ValueError):
             return None
-
-    if not (DATE_START <= ts <= DATE_END):
-        return None
 
     body = record.get("body", "")
     if not body or body in ("[deleted]", "[removed]"):
@@ -84,9 +86,61 @@ def parse_record(line: bytes) -> dict | None:
     }
 
 
+def parse_record(line: bytes) -> dict | None:
+    """Parse one JSON line; return the record only if it falls inside the replay
+    date window, else None. (Thin wrapper over decode_line + the window check.)"""
+    record = decode_line(line)
+    if record is None or not (DATE_START <= record["created_utc"] <= DATE_END):
+        return None
+    return record
+
+
+def records_from_lines(lines):
+    """Yield in-window records from an iterable of raw JSON byte-lines.
+
+    Skips records before the window but keeps reading; once a record *past*
+    DATE_END is seen, stops immediately (the dump is chronological, so there is
+    nothing useful left) — this is what lets us avoid decompressing the entire
+    back half of the file.
+    """
+    for line in lines:
+        if not line.strip():
+            continue
+        record = decode_line(line)
+        if record is None:
+            continue
+        ts = record["created_utc"]
+        if ts > DATE_END:
+            return                      # past the window — stop reading the file
+        if ts >= DATE_START:
+            yield record                # in-window — emit
+        # ts < DATE_START: before the window, skip but keep reading
+
+
+def group_by_timestamp(records):
+    """Group a stream of records into (timestamp, [records]) as the timestamp
+    advances. Lazy: only the current timestamp's records are held in memory, so
+    the whole window is never materialised at once.
+    """
+    group: list[dict] = []
+    group_ts = None
+    for record in records:
+        ts = record["created_utc"]
+        if group_ts is None:
+            group_ts = ts
+        if ts != group_ts:
+            yield group_ts, group
+            group = []
+            group_ts = ts
+        group.append(record)
+    if group:
+        yield group_ts, group
+
+
 # ── Streaming reader ──────────────────────────────────────────────────────────
-def stream_records(filepath: str):
-    """Yield parsed records one by one from the .zst file."""
+def _iter_lines(filepath: str):
+    """Yield raw byte-lines from the .zst file, decompressing on the fly so only
+    a small chunk is ever held in memory."""
     dctx = zstd.ZstdDecompressor(max_window_size=2**31)
     with open(filepath, "rb") as fh:
         with dctx.stream_reader(fh) as reader:
@@ -99,17 +153,15 @@ def stream_records(filepath: str):
                 lines = buffer.split(b"\n")
                 buffer = lines[-1]          # keep incomplete last line
                 for line in lines[:-1]:
-                    if not line.strip():
-                        continue
-                    record = parse_record(line)
-                    if record:
-                        yield record
+                    yield line
+            if buffer:                      # flush any trailing partial line
+                yield buffer
 
-            # flush remaining buffer
-            if buffer.strip():
-                record = parse_record(buffer)
-                if record:
-                    yield record
+
+def stream_records(filepath: str):
+    """Yield in-window records one by one from the .zst file, stopping as soon as
+    the file passes the end of the date window."""
+    yield from records_from_lines(_iter_lines(filepath))
 
 
 # ── Main replay loop ──────────────────────────────────────────────────────────
@@ -131,41 +183,37 @@ def replay(filepath: str, broker: str, topic: str, speed: float,
     log.info("Publishing to topic:       %s", topic)
     log.info("Replay speed multiplier:   %.2fx", speed)
     log.info("Reading file:              %s", filepath)
-
-    # Group by timestamp
-    buckets: dict[int, list[dict]] = defaultdict(list)
-    total = 0
-    skipped = 0
     if skip:
         log.info("Skipping first %d in-window records …", skip)
-    log.info("Loading and filtering records …")
-    for rec in stream_records(filepath):
-        if skipped < skip:
-            skipped += 1
-            continue
-        buckets[rec["created_utc"]].append(rec)
-        total += 1
-        if total % 50_000 == 0:
-            log.info("  … %d records loaded so far", total)
-        if limit is not None and total >= limit:
-            log.info("Reached --limit of %d records; stopping file read early.", limit)
-            break
 
-    log.info("Total records in window: %d across %d unique timestamps", total, len(buckets))
+    # Stream the file straight into Kafka: read → apply skip/limit → group by
+    # timestamp → send. Only the current timestamp's records are ever held in
+    # memory, so peak memory is a fraction of a second's worth of comments — the
+    # full Apr 1-17 window is never loaded at once (and never OOMs).
+    def selected_records():
+        skipped = 0
+        taken = 0
+        for rec in stream_records(filepath):
+            if skipped < skip:
+                skipped += 1
+                continue
+            yield rec
+            taken += 1
+            if limit is not None and taken >= limit:
+                log.info("Reached --limit of %d records; stopping early.", limit)
+                return
 
-    sorted_timestamps = sorted(buckets.keys())
     sent = 0
     last_logged = 0
     prev_ts = None
 
-    for ts in sorted_timestamps:
-        # Sleep proportional to the gap between timestamps
+    for group_ts, group in group_by_timestamp(selected_records()):
+        # Sleep proportional to the gap between consecutive timestamps
         if prev_ts is not None:
-            gap = (ts - prev_ts) / speed
+            gap = (group_ts - prev_ts) / speed
             if gap > 0:
                 time.sleep(gap)
 
-        group = buckets[ts]
         for rec in group:
             key   = rec["id"].encode("utf-8")
             value = json.dumps(rec, ensure_ascii=False).encode("utf-8")
@@ -184,10 +232,10 @@ def replay(filepath: str, broker: str, topic: str, speed: float,
         # Log on crossing a threshold (sent jumps by a whole timestamp group,
         # so an exact `% N == 0` check would skip right over the milestones).
         if sent - last_logged >= 2000:
-            log.info("Sent %d / %d records  (ts=%d)", sent, total, ts)
+            log.info("Sent %d records  (ts=%d)", sent, group_ts)
             last_logged = sent
 
-        prev_ts = ts
+        prev_ts = group_ts
 
     producer.flush()
     log.info("✓ Replay complete. Total records sent: %d", sent)

@@ -290,14 +290,19 @@ def _run_cleaned_consumer() -> None:
 
     This topic already carries every fully-scored comment (the Flink job tees
     it off before the windowed aggregation), so the feed needs no upstream
-    change. Defaults to the 'latest' offset so we show new comments rather than
-    replaying the whole backlog into the feed.
+    change. Like the sentiment/analytics views, the bounded per-keyword buffer
+    is a materialized view of a durable topic, so we replay from `earliest` on
+    every boot - otherwise a fresh dashboard shows an almost-empty feed while
+    hundreds of thousands of scored comments already sit in Kafka. A unique
+    ephemeral group per process keeps this consumer the sole owner of the
+    partition and stops a committed offset from pinning it to the tail.
     """
     from confluent_kafka import Consumer  # lazy import - mock mode needs no broker
 
     conf = _consumer_conf(
-        os.getenv("KAFKA_COMMENTS_GROUP_ID", "dashboard-comments"),
-        os.getenv("KAFKA_COMMENTS_OFFSET_RESET", "latest"),
+        f"dashboard-comments-{os.getpid()}-{int(time.time())}",
+        os.getenv("KAFKA_COMMENTS_OFFSET_RESET", "earliest"),
+        auto_commit=False,
     )
     topic = os.getenv("KAFKA_COMMENTS_TOPIC", "reddit-comments-cleaned")
 

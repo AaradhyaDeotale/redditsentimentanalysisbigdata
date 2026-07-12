@@ -61,26 +61,47 @@ class KeywordRegistry:
     def __init__(self):
         self._lock = threading.Lock()
         self._fallback: set[str] = set()  # used only when Redis is down
-        self._redis = connect_redis()
-        self._seed_defaults()
+        self._redis = None
+        self._ensure_redis()
 
-    def _seed_defaults(self) -> None:
+    def _ensure_redis(self) -> bool:
+        """Return True if a live Redis client is available, (re)connecting if
+        needed.
+
+        Redis can drop out from under us at runtime — a pipeline reset flushes
+        it, a load spike times the socket out — and the old code then set
+        ``_redis = None`` and stayed in in-memory mode *forever*, so keyword
+        changes silently stopped reaching Flink until uvicorn was restarted.
+        Reconnecting lazily on each call lets the registry self-heal the moment
+        Redis is reachable again.
+        """
+        if self._redis is not None:
+            return True
+        client = connect_redis()
+        if client is None:
+            return False
+        try:
+            self._seed_or_recover(client)
+        except Exception:  # noqa: BLE001 - still effectively down
+            return False
+        self._redis = client
+        return True
+
+    def _seed_or_recover(self, client) -> None:
+        # Seed the defaults only if the set was never created (fresh stack)...
         seeds = {normalize(k) for k in _DEFAULTS.split(",")}
         seeds.discard(None)
-        if not seeds:
-            return
-        if self._redis is not None:
-            try:
-                # Only seed when the set has never been created.
-                if not self._redis.exists(KEYWORD_REDIS_KEY):
-                    self._redis.sadd(KEYWORD_REDIS_KEY, *seeds)
-                return
-            except Exception:  # noqa: BLE001 - fall through to in-memory
-                self._redis = None
-        self._fallback = set(seeds)
+        if seeds and not client.exists(KEYWORD_REDIS_KEY):
+            client.sadd(KEYWORD_REDIS_KEY, *seeds)
+        # ...then push anything added to the in-memory fallback while we were
+        # disconnected, so keywords typed during an outage aren't lost.
+        with self._lock:
+            if self._fallback:
+                client.sadd(KEYWORD_REDIS_KEY, *self._fallback)
+                self._fallback.clear()
 
     def list(self) -> list[str]:
-        if self._redis is not None:
+        if self._ensure_redis():
             try:
                 return sorted(self._redis.smembers(KEYWORD_REDIS_KEY))
             except Exception:  # noqa: BLE001 - degrade
@@ -92,7 +113,7 @@ class KeywordRegistry:
         kw = normalize(keyword)
         if kw is None:
             raise ValueError(f"invalid keyword: {keyword!r}")
-        if self._redis is not None:
+        if self._ensure_redis():
             try:
                 self._redis.sadd(KEYWORD_REDIS_KEY, kw)
                 return self.list()
@@ -106,7 +127,7 @@ class KeywordRegistry:
         kw = normalize(keyword)
         if kw is None:
             raise ValueError(f"invalid keyword: {keyword!r}")
-        if self._redis is not None:
+        if self._ensure_redis():
             try:
                 self._redis.srem(KEYWORD_REDIS_KEY, kw)
                 return self.list()
