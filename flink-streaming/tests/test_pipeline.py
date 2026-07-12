@@ -16,6 +16,7 @@ No Flink cluster or Kafka broker required — pure Python unit tests.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -25,6 +26,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "src"))
 
+from flink_job.operators import keyword_filter as kf_module
 from flink_job.operators.parse import build_cleaned_record, parse_comment_payload
 from flink_job.operators.keyword_filter import (
     KeywordFilterFunction,
@@ -69,6 +71,48 @@ class FakeSenseResolver:
     def resolve(self, tokens, subkeywords):
         self.calls.append((tokens, subkeywords))
         return self._sense
+
+
+class FakeRedis:
+    """Redis stand-in exposing only smembers/hgetall, mutable between calls
+    so tests can simulate a value changing between refresh cycles."""
+
+    def __init__(
+        self,
+        keywords: list[str] | None = None,
+        subkeywords: dict[str, list[str]] | None = None,
+    ):
+        self.keywords = list(keywords or [])
+        self.subkeywords = dict(subkeywords or {})
+
+    def smembers(self, key):
+        return set(self.keywords)
+
+    def hgetall(self, key):
+        return {k: ",".join(v) for k, v in self.subkeywords.items()}
+
+
+class FailOnSecondHgetallRedis:
+    """Redis stand-in whose hgetall succeeds once then raises - simulates a
+    transient Redis hiccup on a later refresh cycle."""
+
+    def __init__(
+        self,
+        keywords: list[str] | None = None,
+        subkeywords: dict[str, list[str]] | None = None,
+    ):
+        self.keywords = list(keywords or [])
+        self.subkeywords = dict(subkeywords or {})
+        self._hgetall_calls = 0
+
+    def smembers(self, key):
+        return set(self.keywords)
+
+    def hgetall(self, key):
+        self._hgetall_calls += 1
+        if self._hgetall_calls > 1:
+            raise ConnectionError("redis unavailable")
+        return {k: ",".join(v) for k, v in self.subkeywords.items()}
 
 
 class TestParsing:
@@ -342,6 +386,118 @@ class TestKeywordFilter:
         # Nonexistent path -> Word2Vec.load() raises -> graceful None, no crash.
         resolver = load_w2v_resolver("/nonexistent/path/word2vec.model")
         assert resolver is None
+
+
+class TestSubkeywordRefresh:
+    """Stage 3: live Redis refresh of sub-keywords + the resolver eager-load
+    fix at open(). These exercise _KeywordFilterBase directly (open,
+    _read_keywords/_read_subkeywords, _apply/_apply_subkeywords,
+    _maybe_refresh) - no pyflink or real Redis install required."""
+
+    def test_open_reads_initial_keywords_and_subkeywords_from_redis(self, monkeypatch):
+        fake_redis = FakeRedis(
+            keywords=["jaguar"], subkeywords={"jaguar": ["car", "animal"]}
+        )
+        monkeypatch.setattr(kf_module, "_connect_redis", lambda: fake_redis)
+        monkeypatch.setattr(kf_module, "load_w2v_resolver", lambda *a, **k: None)
+
+        fn = kf_module.KeywordFilterFunction()
+        fn.open(None)
+
+        assert fn._current == {"jaguar"}
+        assert fn._subkeywords == {"jaguar": ["car", "animal"]}
+
+    def test_subkeyword_live_refresh_picks_up_new_value(self, monkeypatch):
+        fake_redis = FakeRedis(keywords=["jaguar"], subkeywords={})
+        monkeypatch.setattr(kf_module, "_connect_redis", lambda: fake_redis)
+        monkeypatch.setattr(kf_module, "load_w2v_resolver", lambda *a, **k: None)
+
+        fn = kf_module.KeywordFilterFunction()
+        fn.open(None)
+        assert fn._subkeywords == {}
+
+        # Sub-keyword typed into the UI lands in Redis; simulate the next
+        # refresh window having elapsed.
+        fake_redis.subkeywords = {"jaguar": ["car", "animal"]}
+        fn._last_refresh = 0.0
+        fn._maybe_refresh()
+
+        assert fn._subkeywords == {"jaguar": ["car", "animal"]}
+
+    def test_subkeyword_refresh_is_noop_before_the_window_elapses(self, monkeypatch):
+        fake_redis = FakeRedis(keywords=["jaguar"], subkeywords={})
+        monkeypatch.setattr(kf_module, "_connect_redis", lambda: fake_redis)
+        monkeypatch.setattr(kf_module, "load_w2v_resolver", lambda *a, **k: None)
+
+        fn = kf_module.KeywordFilterFunction()
+        fn.open(None)
+
+        fake_redis.subkeywords = {"jaguar": ["car", "animal"]}
+        fn._maybe_refresh()  # _last_refresh was just set by open(); too soon
+
+        assert fn._subkeywords == {}
+
+    def test_subkeyword_apply_is_noop_when_unchanged(self, caplog):
+        fn = kf_module.KeywordFilterFunction()
+        fn._subkeywords = {"jaguar": ["car", "animal"]}
+
+        with caplog.at_level(logging.INFO, logger="flink_job.keyword_filter"):
+            fn._apply_subkeywords({"jaguar": ["car", "animal"]})
+
+        assert fn._subkeywords == {"jaguar": ["car", "animal"]}
+        assert not any(
+            "now tracking subkeywords" in r.message for r in caplog.records
+        )
+
+    def test_subkeyword_refresh_keeps_last_known_on_redis_error(self, monkeypatch):
+        fake_redis = FailOnSecondHgetallRedis(
+            keywords=["jaguar"], subkeywords={"jaguar": ["car", "animal"]}
+        )
+        monkeypatch.setattr(kf_module, "_connect_redis", lambda: fake_redis)
+        monkeypatch.setattr(kf_module, "load_w2v_resolver", lambda *a, **k: None)
+
+        fn = kf_module.KeywordFilterFunction()
+        fn.open(None)
+        assert fn._subkeywords == {"jaguar": ["car", "animal"]}
+
+        fn._last_refresh = 0.0
+        fn._maybe_refresh()  # hgetall raises this time - must not clear/flap
+
+        assert fn._subkeywords == {"jaguar": ["car", "animal"]}
+
+    def test_resolver_loads_at_open_even_with_empty_initial_subkeywords(
+        self, monkeypatch
+    ):
+        sentinel = object()
+        monkeypatch.setattr(kf_module, "_connect_redis", lambda: None)
+        monkeypatch.setattr(kf_module, "load_w2v_resolver", lambda *a, **k: sentinel)
+
+        fn = kf_module.KeywordFilterFunction(subkeywords={})
+        fn.open(None)
+
+        assert fn._resolver is sentinel
+
+    def test_resolver_stays_none_when_model_missing_and_fallback_still_works(
+        self, monkeypatch
+    ):
+        # load_w2v_resolver() itself never raises (it catches load failures
+        # and returns None) - this simulates that outcome and checks open()
+        # doesn't crash and map() still falls back to hard-coded disambiguation.
+        monkeypatch.setattr(kf_module, "_connect_redis", lambda: None)
+        monkeypatch.setattr(kf_module, "load_w2v_resolver", lambda *a, **k: None)
+
+        fn = kf_module.KeywordFilterFunction(
+            keywords=["apple"], subkeywords={"apple": ["fruit", "technology"]}
+        )
+        fn.open(None)
+        assert fn._resolver is None
+
+        record = {
+            "cleaned_body": "I love my Apple iPhone",
+            "tokens": ["I", "love", "my", "Apple", "iPhone"],
+        }
+        result = fn.map(record)
+        assert result["keyword_senses"] == {"apple": "company"}
 
 
 class TestCleanedRecordSchema:
