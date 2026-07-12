@@ -18,7 +18,7 @@ each owned by its own folder in this repo:
 | P3 - Diya  | Stream processing        | [`flink-streaming/`](flink-streaming/) | Cleans, tokenizes, tags keywords, scores sentiment, aggregates windows |
 | P4 - Sahil   | ML model                 | [`ml-model/`](ml-model/) | Trains and versions the sentiment classifier used by Flink |
 | P5 - Aaradhya    | Dashboard (serving/UI)   | [`dashboard/`](dashboard/) | REST + WebSocket API and React SPA showing live sentiment |
-| P6 - Rehan  | Ops / deployment         | `dashboard/` (control panel) | Docker packaging and a UI control panel to drive the whole pipeline |
+| P6 - Rehan  | Ops / deployment         | `dashboard/` (control panel), [`deploy/aws/`](deploy/aws/) | Docker packaging, a UI control panel to drive the whole pipeline, and Terraform for a live AWS deployment |
 
 Each folder has its own detailed README; this document explains how the
 pieces fit together and how to stand the whole pipeline up end to end.
@@ -33,6 +33,7 @@ pieces fit together and how to stand the whole pipeline up end to end.
 - [Requirements](#requirements)
 - [Quick start - full pipeline with Docker](#quick-start---full-pipeline-with-docker)
 - [Local development (without Docker)](#local-development-without-docker)
+- [Cloud deployment (AWS)](#cloud-deployment-aws)
 - [Configuration](#configuration)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
@@ -43,60 +44,7 @@ pieces fit together and how to stand the whole pipeline up end to end.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  subgraph P1 [P1 - kafka-producer]
-    ZST[RC_2019-04.zst]
-    PROD[producer.py]
-    ZST --> PROD
-  end
-
-  subgraph P2 [P2 - Kafka cluster]
-    TIN[(reddit-comments)]
-    TCLEAN[(reddit-comments-cleaned)]
-    TMAL[(reddit-comments-malformed)]
-    TRES[(sentiment-results)]
-    TANA[(analytics-results)]
-  end
-
-  subgraph P3 [P3 - flink-streaming]
-    SRC[Kafka Source]
-    PARSE[parse + preprocess]
-    KW[keyword filter]
-    ML[sentiment ML scorer]
-    WIN[window aggregation]
-    SKETCH[probabilistic sketches CMS + HLL]
-    SRC --> PARSE --> KW --> ML --> WIN
-    ML --> SKETCH
-  end
-
-  subgraph P4 [P4 - ml-model]
-    STORE[(MODEL_DIR versioned models)]
-  end
-
-  subgraph P5P6 [P5/P6 - dashboard]
-    API[FastAPI REST + WebSocket]
-    SPA[React SPA]
-    CTRL[Control panel]
-    API --> SPA
-  end
-
-  REDIS[(Redis - live keyword set)]
-
-  PROD --> TIN --> SRC
-  PARSE -- bad records --> TMAL
-  ML -- cleaned + scored --> TCLEAN
-  WIN --> TRES
-  SKETCH --> TANA
-  STORE -. loads/hot-reloads .-> ML
-  TRES --> API
-  TCLEAN --> API
-  TANA --> API
-  REDIS <-. tracked keywords .-> ML
-  REDIS <-. tracked keywords .-> API
-  CTRL -. start/stop/reset .-> PROD
-  CTRL -. start/stop/reset .-> P3
-```
+![Architecture](dashboard/docs/screenshots/architecture.png)
 
 **Data flow, in words:**
 
@@ -117,15 +65,22 @@ flowchart LR
 4. **ml-model** is trained offline (VADER lexicon labels a corpus, then a
    real classifier - TF-IDF/Word2Vec features + scikit-learn - is trained
    on those labels). The versioned model store is mounted into the Flink
-   containers; the scorer hot-reloads new versions without a restart.
+   containers; the scorer hot-reloads new versions without a restart. A
+   `retrainer` service can also run continuously alongside the pipeline,
+   consuming `reddit-comments-cleaned`, labeling with VADER, and retraining
+   automatically every `RETRAIN_EVERY_N` comments - see
+   [ml-model/src/ml_model/retrain/](ml-model/src/ml_model/retrain/).
 5. **dashboard** consumes `sentiment-results` (aggregated windows),
    `reddit-comments-cleaned` (individual comments) and `analytics-results`
    (sketch summaries) and serves both a REST/WebSocket API and a React SPA
    with live charts, a comment feed, a Trends tab (trending terms with
    momentum + author reach), and Kafka/Flink health monitoring tabs.
-6. **Redis** holds the live, shared set of tracked keywords (used by both
-   the Flink job and the dashboard) so keywords can be added/removed at
-   runtime without restarting the pipeline.
+6. **Redis** backs three things shared between Flink and the dashboard: the
+   live tracked-keyword set (`flink:keywords`, so keywords can be
+   added/removed at runtime without restarting the pipeline), a prediction
+   cache for the sentiment scorer, and a `model-reload` pub/sub channel the
+   retrainer publishes to (`model_ready`) so the running scorer hot-reloads
+   without a restart.
 
 All Docker services join a single external network, **`bd_streaming`**,
 so containers can address each other by service name (`kafka-1`,
@@ -140,8 +95,9 @@ them.
 .
 ├── kafka-producer/     # P1 - dataset replay into Kafka + local Kafka cluster (docker/)
 ├── flink-streaming/    # P3 - PyFlink job: parse, preprocess, keyword-tag, score, window
-├── ml-model/           # P4 - training pipeline + versioned model store
+├── ml-model/           # P4 - training pipeline + versioned model store + continuous retrainer
 ├── dashboard/          # P5/P6 - FastAPI + React serving layer and control panel
+├── deploy/aws/         # P6 - Terraform (MSK/Redis/EC2) + scripts to run the pipeline on AWS
 ├── RC_2019-04.zst      # Reddit comment dump (not committed - see Dataset below)
 └── README.md           # this file
 ```
@@ -202,8 +158,39 @@ This project uses the **Pushshift Reddit comments dataset for April 2019**
 
 ## Quick start - full pipeline with Docker
 
-Services must be started **in order** because each later compose file joins
-the `bd_streaming` network created by an earlier one.
+All compose files fall back to sane defaults baked into the compose YAML
+(`${VAR:-default}`), so **no `.env` files are required** to get the pipeline
+running - copy the `.env.example` files later, only if you want to change a
+setting. Services must be started **in order** because each later compose
+file joins the `bd_streaming` network created by an earlier one.
+
+### TL;DR - copy/paste to see it working
+
+This brings up Kafka + Flink + the dashboard and replays a tiny built-in
+sample dataset, with no dataset download, no `.env` editing, and no ML
+model required (the Flink job runs fine without one - comments flow and the
+comment feed populates; sentiment scores just show `no_model_available`
+until you train a model in the [optional step](#optional-train-a-real-sentiment-model) below):
+
+```bash
+git clone <this-repo-url> && cd bd_project_w3_a
+
+cd kafka-producer  && docker compose -f docker/docker-compose.yml up -d
+cd ../flink-streaming && docker compose -f docker/docker-compose.yml up -d --build
+cd ../dashboard     && docker compose -f docker/docker-compose.yml up -d --build
+
+cd ../kafka-producer
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python data/make_test_data.py
+python src/producer/producer.py --file data/test_data.zst \
+  --broker localhost:9092,localhost:9095,localhost:9096 --speed 100
+```
+
+Open **http://localhost:8000** and watch the comment feed / Pipeline tab
+update. The steps below are the same thing broken out individually, with
+health checks and the optional pieces (real dataset, trained model) filled
+in.
 
 ### 1. Start Kafka (creates the shared network)
 
@@ -218,33 +205,10 @@ Confirm the cluster is healthy:
 docker exec kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
 ```
 
-### 2. Train an ML model (first time only)
-
-The Flink job will run without a model (scoring is skipped with
-`sentiment_status: no_model_available`), but for real sentiment output you
-need a trained model before or shortly after starting Flink:
-
-```bash
-cd ml-model
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env
-
-# 1. Label a corpus of cleaned comments with VADER (labels only)
-python src/ml_model/labeling/label_corpus.py --input data/cleaned_comments.jsonl --output data/labeled_comments.jsonl
-
-# 2. Train the real classifier
-python src/ml_model/model/train.py --input data/labeled_comments.jsonl --feature tfidf
-```
-
-This writes a new version under `ml-model/models/`. Flink mounts this
-directory directly, so the running scorer hot-reloads it automatically.
-
-### 3. Start Flink (builds the ML model into its image and joins Kafka)
+### 2. Start Flink (joins the Kafka network)
 
 ```bash
 cd flink-streaming
-cp .env.example .env
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 
@@ -255,9 +219,11 @@ docker logs flink-reddit-job
 ```
 
 Look for `Job has been submitted with JobID ...`, or open the Flink Web UI
-at **http://localhost:8081** → Running Jobs.
+at **http://localhost:8081** → Running Jobs. No trained model is needed yet -
+the scorer just reports `sentiment_status: no_model_available` until one
+shows up under `ml-model/models/` (see the optional step below).
 
-### 4. Start the dashboard
+### 3. Start the dashboard
 
 ```bash
 cd dashboard
@@ -270,12 +236,14 @@ dashboard) with color-coded health on each hop, and its **control panel** can
 start/stop the producer and reset the pipeline directly from the UI (local
 development only - gated behind `CONTROL_ENABLED`).
 
-### 5. Replay data into the pipeline
+### 4. Replay data into the pipeline
 
 Either use the dashboard's control panel, or run the producer manually:
 
 ```bash
 cd kafka-producer
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 python data/make_test_data.py                                    # small smoke-test dataset
 python src/producer/producer.py \
   --file data/test_data.zst \
@@ -283,13 +251,44 @@ python src/producer/producer.py \
   --speed 100
 ```
 
-For the full historical dataset, point `--file` at `RC_2019-04.zst` (or set
-`ZST_FILE` in `.env`) and pick a `--speed` multiplier appropriate for how
+For the full historical dataset, download `RC_2019-04.zst` (see
+[Dataset](#dataset)), point `--file` at it (or set `ZST_FILE` in a
+`kafka-producer/.env`), and pick a `--speed` multiplier appropriate for how
 fast you want the 2019-04-01 → 2019-04-17 window replayed.
 
 Watch sentiment appear live in the dashboard's **Sentiment** tab (per-window
 aggregates need a full window to close - lower `WINDOW_SIZE_SEC` for faster
 feedback during testing).
+
+### 5. (Optional) Train a real sentiment model
+
+Skip this to just watch comments and metadata flow through the pipeline.
+Train a model when you want real sentiment scores instead of
+`no_model_available`. Training needs a small corpus of *cleaned* comments,
+which only exists once the pipeline has processed some data (step 4), so
+pull a slice off the `reddit-comments-cleaned` topic first:
+
+```bash
+docker exec kafka-1 /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic reddit-comments-cleaned \
+  --from-beginning --max-messages 2000 --timeout-ms 15000 \
+  > ml-model/data/cleaned_comments.jsonl
+
+cd ml-model
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+# 1. Label the corpus with VADER (labels only)
+python src/ml_model/labeling/label_corpus.py --input data/cleaned_comments.jsonl --output data/labeled_comments.jsonl
+
+# 2. Train the real classifier
+python src/ml_model/model/train.py --input data/labeled_comments.jsonl --feature tfidf
+```
+
+This writes a new version under `ml-model/models/`. Flink mounts this
+directory directly, so the already-running scorer hot-reloads it
+automatically - no restart needed. For the full Reddit dump, replay more
+data before training so the corpus is representative.
 
 ### Teardown
 
@@ -321,6 +320,41 @@ README for details:
 - **dashboard** - `USE_MOCK_DATA=true uvicorn src.main:app --reload` runs
   the API against generated mock data (no Kafka/Flink needed), with
   `npm run dev` for the Vite frontend with hot reload.
+
+---
+
+## Cloud deployment (AWS)
+
+[`deploy/aws/`](deploy/aws/) stands the same pipeline up on AWS - managed
+**MSK** (Kafka) and **ElastiCache** (Redis) instead of the local containers,
+with one **EC2** instance running the app containers (producer, Flink,
+dashboard, ML retrainer) via `docker-compose.cloud.yml`. Provisioning is
+Terraform, split into phases:
+
+| File | Provisions |
+|------|------------|
+| `foundation.tf` | Monthly cost budget alarm, S3 bucket (data slice + model files), VPC across 3 AZs - all free, no compute yet |
+| `phase2_data.tf` | Managed MSK (3-broker Kafka, mirroring the local cluster) and ElastiCache Redis |
+| `phase3_compute.tf` | The EC2 instance (default `t3.xlarge`), its security group (SSH + dashboard 8000 + Flink UI 8081, locked to `allowed_cidr`), and IAM for SSM + S3 access |
+| `security.tf`, `variables.tf`, `outputs.tf`, `versions.tf` | Supporting IAM/network rules, input variables, and Terraform outputs (EC2 IP, Kafka brokers, Redis endpoint) |
+
+The `run_pipeline` variable is the on/off switch for the billable resources
+(MSK, Redis, EC2) - the S3/VPC/budget foundation stays either way:
+
+```bash
+cd deploy/aws
+terraform init
+terraform apply -var="alert_email=you@example.com"          # provisions everything, run_pipeline defaults to true
+./deploy-to-ec2.sh                                            # rsyncs the repo to EC2 and starts docker-compose.cloud.yml
+./stream.sh 30                                                 # trigger a producer replay at a watchable pace (arg = speed)
+./reset.sh                                                     # wipe Kafka topics and restart fresh (e.g. before a demo)
+
+terraform apply -var="alert_email=you@example.com" -var="run_pipeline=false"  # tear down MSK/Redis/EC2 to stop billing
+```
+
+Dashboard and Flink UI are reachable at `http://<ec2_public_ip>:8000` and
+`:8081` (`terraform output ec2_public_ip`). See the comments in each script
+for details - `deploy-to-ec2.sh` is safely re-runnable after code changes.
 
 ---
 
