@@ -183,6 +183,14 @@ def replay(filepath: str, broker: str, topic: str, speed: float,
     log.info("Publishing to topic:       %s", topic)
     log.info("Replay speed multiplier:   %.2fx", speed)
     log.info("Reading file:              %s", filepath)
+
+    # LIVE mode (opt-in via env): stamp each comment with the current time
+    # instead of its original 2019 timestamp, so Flink's event-time clock keeps
+    # advancing and windowed results update live. Default off = original behaviour.
+    live = os.getenv("LIVE_TIMESTAMPS", "false").lower() in ("1", "true", "yes")
+    if live:
+        log.info("LIVE mode ON: stamping comments with current time")
+
     if skip:
         log.info("Skipping first %d in-window records …", skip)
 
@@ -215,11 +223,13 @@ def replay(filepath: str, broker: str, topic: str, speed: float,
                 time.sleep(gap)
 
         for rec in group:
+            if live:
+                rec = {**rec, "created_utc": int(time.time())}
             key   = rec["id"].encode("utf-8")
             value = json.dumps(rec, ensure_ascii=False).encode("utf-8")
             # Stamp the Kafka record timestamp with the comment's event time
-            # (created_utc, ms) so Flink windows on 2019 event-time, not on
-            # today's ingestion time.
+            # (created_utc, ms) so Flink windows on event-time. In LIVE mode this
+            # is "now", so the event-time clock advances and windows fire live.
             producer.produce(
                 topic, key=key, value=value,
                 timestamp=int(rec["created_utc"]) * 1000,
